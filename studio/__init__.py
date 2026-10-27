@@ -2,7 +2,7 @@
 
 The notebook only calls functions from this package; see README.md for the cell-by-cell guide.
 """
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 
 MODULES = ["studio.lib", "studio.pipeline", "studio.setup", "studio.tools.ollama", "studio.tools.forge",
            "studio.tools.comfyui", "studio.tools.audio", "studio.control_center", "studio.dashboard"]

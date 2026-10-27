@@ -52,35 +52,39 @@ def services(monkeypatch):
     monkeypatch.setattr(L, "service_ready", lambda name: name in ("forge", "comfy"))
 
 
+def check(clip="pexels", llm="openai", voice="edge", image="flux", music="none", paid=False, own=0, cover=False,
+          keyframes=False):
+    return L.check_selection(llm, clip, voice, image, music, paid, own, cover, keyframes)
+
+
 def test_every_provider_is_checked_without_errors(keys, services):
     """Each provider of each kind, swapped into a baseline selection (the kinds never depend on each other)."""
-    base = ["openai", "pexels", "edge", "none", "none", "none", False, 0]
-    options = [["openai", "ollama", "compat:groq", "anthropic", "gemini"], list(L.CLIP_PROVIDERS),
-               list(L.VOICE_PROVIDERS), list(L.IMAGE_PROVIDERS), list(L.IMAGE_PROVIDERS), list(L.MUSIC_SOURCES),
-               [False, True], [0, 2]]
-    for position, values in enumerate(options):
+    options = dict(llm=["openai", "ollama", "compat:groq", "anthropic", "gemini"], clip=list(L.CLIP_PROVIDERS),
+                   voice=list(L.VOICE_PROVIDERS), image=list(L.IMAGE_PROVIDERS), music=list(L.MUSIC_SOURCES),
+                   paid=[False, True], own=[0, 2], cover=[False, True], keyframes=[False, True])
+    for name, values in options.items():
         for value in values:
-            selection = list(base)
-            selection[position] = value
-            errors, warnings = L.check_selection(*selection)
+            errors, warnings = check(**{name: value})
             assert isinstance(errors, list) and isinstance(warnings, list)
 
 
 def test_paid_clips_need_confirmation_and_their_key(keys, services):
-    errors, _ = L.check_selection("openai", "wavespeed", "edge", "none", "none", "none", False)
+    errors, _ = check("wavespeed")
     assert any("Confirmo el cobro" in e for e in errors)
-    errors, warnings = L.check_selection("openai", "wavespeed", "edge", "none", "none", "none", True)
+    errors, warnings = check("wavespeed", paid=True)
     assert any("cobra" in w for w in warnings) and any("WaveSpeed" in e for e in errors)
+    errors, _ = check("gemini_omni", paid=True)
+    assert any("Gemini" in e for e in errors)                  # Omni uses the Gemini key
 
 
 def test_own_clips_need_files(keys, services):
-    errors, _ = L.check_selection("openai", "upload", "edge", "none", "none", "none", False, 0)
+    errors, _ = check("upload")
     assert any("Sube al menos" in e for e in errors)
-    errors, _ = L.check_selection("openai", "footage", "edge", "none", "none", "none")
+    errors, _ = check("footage")
     assert any("footage" in e for e in errors)
     open(f"{L.FOOTAGE_DIR}/clip.mp4", "w").close()
     try:
-        errors, _ = L.check_selection("openai", "footage", "edge", "none", "none", "none")
+        errors, _ = check("footage")
         assert not any("footage" in e for e in errors)
     finally:
         os.remove(f"{L.FOOTAGE_DIR}/clip.mp4")
@@ -88,15 +92,26 @@ def test_own_clips_need_files(keys, services):
 
 def test_music_sources(keys, services, monkeypatch):
     monkeypatch.setattr(L, "music_files", lambda: [])
-    _, warnings = L.check_selection("openai", "pexels", "edge", "none", "none", "library")
+    _, warnings = check(music="library")
     assert any("No hay canciones" in w for w in warnings)
-    errors, _ = L.check_selection("openai", "pexels", "edge", "none", "none", "elevenlabs")
+    errors, _ = check(music="elevenlabs")
     assert any("ElevenLabs" in e for e in errors)
 
 
+def test_the_image_engine_is_needed_only_when_something_uses_it(keys, services):
+    errors, _ = check(image="nano_banana")
+    assert not any("Gemini" in e for e in errors)              # no cover, stock clips: no image needed
+    errors, _ = check(image="nano_banana", cover=True)
+    assert any("Gemini" in e and "portada" in e for e in errors)
+    errors, _ = check("ai_photos", image="image_api")
+    assert any("las fotos de los clips" in e for e in errors)
+    errors, _ = check("gemini_omni", image="nano_banana", paid=True, keyframes=True)
+    assert any("imagen base" in e for e in errors)
+
+
 def test_local_tools_that_are_not_running_are_named(keys, services):
-    errors, _ = L.check_selection("ollama", "wan22", "f5", "flux", "flux", "none")
+    errors, _ = check("wan22", llm="ollama", voice="f5", cover=True, keyframes=True)
     assert any("Ollama" in e for e in errors) and any("F5-TTS" in e for e in errors)
     assert not any("Forge" in e for e in errors)
-    _, warnings = L.check_selection("openai", "wan22", "edge", "none", "none", "none")
+    _, warnings = check("wan22")
     assert any("texto a video" in w for w in warnings)

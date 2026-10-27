@@ -21,6 +21,21 @@ studio/
 `lib` no depende de nadie; `pipeline` depende de `lib`; `control_center` de ambos. `studio.reload()`
 los recarga en ese orden después de un `git pull`.
 
+## Interfaz
+
+La pestaña **🎬 Producir** es un compositor: la idea y una fila de botones (texto, imagen, voz, video,
+formato, duración, estilo y ⚙️ Ajustes). Cada botón abre una ventana (`modal()` en `control_center.py`: una
+columna con `position: fixed`) y su etiqueta resume lo elegido (`chip_labels`). Las opciones que dependen de
+la elección (cobro, archivos propios, primer fotograma, frames y pasos de la IA local) se muestran u ocultan con
+`clip_visibility`. Los selectores en cascada escuchan solo al usuario (`.input`), así cargar ajustes guardados
+nunca los deshace.
+
+## Google
+
+Nano Banana (imágenes) y Gemini Omni (video, el sucesor de Veo en la API de Gemini desde octubre de 2026) usan
+la *Interactions API* de Gemini en modo síncrono; `find_media()` busca la imagen o el video en la respuesta,
+venga en base64 o como URI de archivo.
+
 ## Procesos
 
 El paquete corre en el Python de Colab. Forge (Python 3.10), ComfyUI y F5-TTS (Python 3.11) corren como

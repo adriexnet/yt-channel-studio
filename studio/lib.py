@@ -118,7 +118,9 @@ PORTS = {
 DEFAULT_API_KEYS = {
     "openai": {"api_key": "", "chat_model": "gpt-6.1-sol", "tts_model": "tts-1-hd", "tts_voice": "onyx"},
     "anthropic": {"api_key": "", "chat_model": "claude-sonnet-5-5"},
-    "gemini": {"api_key": "", "chat_model": "gemini-2.5-flash", "tts_model": "gemini-2.5-flash-preview-tts"},
+    "gemini": {"api_key": "", "chat_model": "gemini-3.8-flash", "tts_model": "gemini-3.8-flash-tts",
+               "image_model": "gemini-nano-banana-2.1", "video_model": "gemini-omni-1.1-flash",
+               "video_resolution": "720p"},
     # One sub-table per OpenAI-compatible service: [openai_compatible.groq], [openai_compatible.openrouter], ...
     "openai_compatible": {
         "groq": {"api_key": "", "base_url": "https://api.groq.com/openai/v1", "chat_model": "llama-3.3-70b-versatile"},
@@ -548,6 +550,7 @@ FIELD_LABELS = {
     "base_url": "Base URL", "model": "Modelo", "size": "Tamaño de imagen", "resolution": "Resolución",
     "voice_id": "Voice ID por defecto", "voice": "Voz por defecto", "model_id": "Model ID",
     "music_model": "Modelo de música", "username": "Usuario (perfil de Upload-Post)",
+    "image_model": "Modelo de imagen", "video_model": "Modelo de video", "video_resolution": "Resolución de video",
     "facebook_page_id": "Facebook Page ID (opcional)",
 }
 SECRET_FIELDS = {"api_key", "speech_key", "token"}
@@ -559,8 +562,9 @@ CREDENTIALS = {
                    link="https://platform.openai.com/api-keys"),
     "anthropic": dict(label="Anthropic (Claude)", category="llm", fields=["api_key", "chat_model"],
                       required=["api_key"], link="https://console.anthropic.com/settings/keys"),
-    "gemini": dict(label="Google Gemini (LLM y voz Gemini TTS)", category="llm",
-                   fields=["api_key", "chat_model", "tts_model"], required=["api_key"],
+    "gemini": dict(label="Google Gemini (LLM, voz, imagen Nano Banana y video Omni)", category="llm",
+                   fields=["api_key", "chat_model", "tts_model", "image_model", "video_model", "video_resolution"],
+                   required=["api_key"],
                    link="https://aistudio.google.com/apikey"),
     "pexels": dict(label="Pexels", category="stock", fields=["api_key"], required=["api_key"],
                    link="https://www.pexels.com/api/"),
@@ -685,8 +689,11 @@ CLIP_PROVIDERS = {
     "coverr": dict(type="stock", label="Coverr", creds=["coverr"]),
     "upload": dict(type="own", label="Archivos que subo aquí"),
     "footage": dict(type="own", label="Carpeta footage de mi Drive"),
-    "wan22": dict(type="local_ai", label="Wan 2.2 TI2V-5B", services=["comfy"]),
-    "ltxv": dict(type="local_ai", label="LTX-Video 2B", services=["comfy"]),
+    # accepts_image: the clip can start from an image made by your image engine (image-to-video).
+    "wan22": dict(type="local_ai", label="Wan 2.2 TI2V-5B", services=["comfy"], accepts_image=True),
+    "ltxv": dict(type="local_ai", label="LTX-Video 2B", services=["comfy"], accepts_image=True),
+    "gemini_omni": dict(type="external_ai", label="Google Gemini Omni (sucesor de Veo, con audio)", creds=["gemini"],
+                        accepts_image=True),
     # Text-to-video services: one paid generation per scene (create task -> poll -> download).
     "wavespeed": dict(type="external_ai", label="WaveSpeed AI", creds=["wavespeed"]),
     "volcengine_seedance": dict(type="external_ai", label="Volcano Engine Seedance", creds=["volcengine_seedance"]),
@@ -694,9 +701,7 @@ CLIP_PROVIDERS = {
     "muapi": dict(type="external_ai", label="MuAPI AI Video", creds=["muapi"]),
     "metaso_minimax": dict(type="external_ai", label="Metaso · MiniMax H3", creds=["metaso_minimax"]),
     "infistar": dict(type="external_ai", label="Infistar AI Video", creds=["infistar"]),
-    "flux_photos": dict(type="ai_image", label="FLUX (local)", services=["forge"], image_provider="flux"),
-    "api_photos": dict(type="ai_image", label="API de imagen compatible con OpenAI (externa)", creds=["image_api"],
-                       image_provider="image_api"),
+    "ai_photos": dict(type="ai_image", label="Fotos de tu motor de imagen, con movimiento"),
 }
 
 MEDIA_VIDEO_EXTS = (".mp4", ".mov", ".m4v", ".webm", ".mkv")
@@ -754,10 +759,16 @@ VOICE_PROVIDERS = {
     "voxcpm": dict(type="external", label="VoxCPM TTS", creds=["voxcpm"], voices=[("Default", "default")]),
 }
 
-IMAGE_PROVIDERS = {
-    "none": dict(label="Sin imagen", kind=None),
+IMAGE_PROVIDERS = {   # the image engine: cover, first frame of each clip and AI photos all use the same one
     "flux": dict(label="FLUX (local)", kind="local", services=["forge"]),
+    "nano_banana": dict(label="Nano Banana (Google Gemini)", kind="external", creds=["gemini"]),
     "image_api": dict(label="API compatible con OpenAI (externa)", kind="external", creds=["image_api"]),
+}
+STYLES = {   # how the reel looks and is told; the LLM adapts script, images and motion to it
+    "auto": "✨ Automático", "narrated": "🎥 Narrado con imágenes", "animated": "🧸 Animado (3D tipo Pixar)",
+    "cartoon": "🖍️ Caricatura 2D", "talking_objects": "🗣️ Objetos que hablan", "listicle": "🔢 Top / datos curiosos",
+    "story": "📖 Historia (storytime)", "pov": "👀 POV", "tutorial": "🛠️ Tutorial paso a paso",
+    "motivational": "🔥 Motivacional", "cinematic": "🎬 Cinemático realista",
 }
 MUSIC_SOURCES = {
     "none": dict(label="Sin música"),
@@ -795,19 +806,20 @@ def music_files():
     return sorted(found)
 
 
-def check_selection(llm_key, clip_provider, voice_provider, cover_provider, keyframe_provider, music_source,
-                    confirm_paid=False, own_clips=0):
+def check_selection(llm_key, clip_provider, voice_provider, image_provider, music_source, confirm_paid=False,
+                    own_clips=0, make_cover=True, use_keyframes=True):
     """Everything a run needs, checked up front. Returns (errors, warnings); errors block the run.
     No provider depends on another: each one only needs its own key or its own tool running.
-    cover_provider: image for the cover ("none" = no cover).
-    keyframe_provider: first frame of each clip, only used by local AI video ("none" = text-to-video).
+    image_provider: the image engine, used for the cover, the first frame of clips that accept one and AI photos.
     own_clips: how many files were uploaded for the "upload" clip source."""
     errors, warnings = [], []
     needed_services, needed_creds = set(), {}
 
     def need(entry, what):
         for s in entry.get("creds", []):
-            needed_creds.setdefault(s, what)
+            needed_creds.setdefault(s, [])
+            if what not in needed_creds[s]:
+                needed_creds[s].append(what)
         needed_services.update(entry.get("services", []))
 
     # Text
@@ -820,9 +832,9 @@ def check_selection(llm_key, clip_provider, voice_provider, cover_provider, keyf
         if not get_compat(name, "base_url"):
             errors.append(f"Falta la Base URL de <b>{name}</b>.")
     else:
-        needed_creds.setdefault(llm_key, "el guion")
+        need({"creds": [llm_key]}, "el guion")
 
-    # Clips (and their base image, which only local AI video uses)
+    # Clips
     clip = CLIP_PROVIDERS[clip_provider]
     need(clip, f"los clips ({clip['label']})")
     if clip["type"] == "external_ai":
@@ -830,19 +842,19 @@ def check_selection(llm_key, clip_provider, voice_provider, cover_provider, keyf
             warnings.append(f"{clip['label']} cobra por cada clip generado (uno por escena).")
         else:
             errors.append(f"{clip['label']} cobra por cada clip: marca «Confirmo el cobro» para continuar.")
-    if clip["type"] == "local_ai":
-        if keyframe_provider == "none":
-            warnings.append(f"Sin imagen base: {clip['label']} generará cada clip solo desde el texto (texto a video).")
-        else:
-            need(IMAGE_PROVIDERS[keyframe_provider], "la imagen base de cada clip")
+    if clip.get("accepts_image") and not use_keyframes and clip["type"] == "local_ai":
+        warnings.append(f"Sin imagen base: {clip['label']} generará cada clip solo desde el texto (texto a video).")
     if clip_provider == "upload" and not own_clips:
         errors.append("Sube al menos un clip o foto en «Mis clips».")
     if clip_provider == "footage" and not footage_files():
         errors.append(f"La carpeta <b>footage</b> de tu Drive está vacía: copia tus clips o fotos en {FOOTAGE_DIR}.")
 
-    # Cover
-    if cover_provider != "none":
-        need(IMAGE_PROVIDERS[cover_provider], "la portada")
+    # Image engine: only when something actually uses it
+    uses = [what for what, used in (("la portada", make_cover),
+                                     ("la imagen base de cada clip", clip.get("accepts_image") and use_keyframes),
+                                     ("las fotos de los clips", clip["type"] == "ai_image")) if used]
+    if uses:
+        need(IMAGE_PROVIDERS[image_provider], " y ".join(uses))
 
     # Voice
     voice = VOICE_PROVIDERS[voice_provider]
@@ -857,10 +869,11 @@ def check_selection(llm_key, clip_provider, voice_provider, cover_provider, keyf
         warnings.append("ElevenLabs Music cobra por canción y requiere un plan de pago; "
                         "la canción queda en Drive/music/ai para reutilizarla gratis.")
 
-    for section, what in needed_creds.items():
+    for section, uses in needed_creds.items():
         missing = credential_missing(section)
         if missing:
             fields = ", ".join(FIELD_LABELS.get(f, f) for f in missing)
+            what = ", ".join(uses[:-1]) + " y " + uses[-1] if len(uses) > 1 else uses[0]
             errors.append(f"Falta {fields} de <b>{CREDENTIALS[section]['label']}</b> para {what}. "
                           f"Agrégala en la pestaña 🔑 Claves API.")
     for name in sorted(needed_services):
@@ -953,7 +966,7 @@ def _azure_tts(text, voice, output_path):
 def _gemini_tts(text, voice, output_path):
     """Gemini returns raw 16-bit PCM (24 kHz mono) in base64; ffmpeg turns it into MP3."""
     import base64
-    model = get_key("gemini", "tts_model", "gemini-2.5-flash-preview-tts")
+    model = get_key("gemini", "tts_model", "gemini-3.8-flash-tts")
     r = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                       params={"key": get_key("gemini", "api_key")}, timeout=600,
                       json={"contents": [{"parts": [{"text": text}]}],

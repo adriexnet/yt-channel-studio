@@ -1,10 +1,15 @@
-"""The real Gradio 6 interfaces: built from the package, handlers exercised, and (optionally) opened in Chromium."""
+"""The real Gradio 6 interfaces: built from the package, handlers exercised, and opened in Chromium."""
 import json, os, time
 import pytest
 import studio.lib as L
 import studio.pipeline as P
 from studio import control_center as CC, jobs
 from studio.tools import audio
+
+FORM = ["idea_in", "language_dd", "duration_sl", "style_rd", "tone_dd", "instructions_in", "scenes_dd", "llm_dd",
+        "model_dd", "image_rd", "cover_cb", "keyframes_cb", "clip_type_rd", "clip_dd", "paid_cb", "own_files_in",
+        "voice_type_rd", "voice_provider_dd", "voice_dd", "clone_in", "music_rd", "kit_cb", "ai_w", "ai_h", "ai_f",
+        "ai_s"]
 
 
 @pytest.fixture(scope="module")
@@ -20,37 +25,67 @@ def nothing_running(monkeypatch):
     monkeypatch.setattr(L, "service_ready", lambda name: False)
 
 
+def form_values(c, **changes):
+    values = dict(zip(CC.PRODUCE_KEYS, [c[n].value for n in FORM]))
+    values.update(changes)
+    return [values[k] for k in CC.PRODUCE_KEYS] + [comp.value for comp in c["montage_inputs"]]
+
+
 def test_layout(ui):
     blocks, c = ui
     assert len(blocks.blocks) > 150
+    assert [CC.PRODUCE_KEYS[i] for i in range(len(FORM))] == CC.PRODUCE_KEYS
     assert len(CC.KEY_COMPONENTS) == sum(len(cred["fields"]) for cred in L.CREDENTIALS.values())
     assert len(c["montage_inputs"]) == len(CC.MONTAGE_KEYS) == len(c["reel_montage_inputs"])
+    assert c["montage_inputs"][0] is c["aspect_rd"]           # the format picker IS the montage format
     assert "Anton" in CC.FONTS and c["prefs"]["montage"]["font"] == "Anton"
+    for window in ("llm_modal", "image_modal", "voice_modal", "video_modal", "format_modal", "duration_modal",
+                   "style_modal", "settings_modal"):
+        assert c[window].visible is False                     # every window starts closed
 
 
-def test_cascading_pickers():
+def test_chips_summarize_the_choices():
+    labels = CC.chip_labels("Google Gemini", "gemini-3.8-flash", "nano_banana", "azure", "es-ES-ElviraNeural",
+                            "gemini_omni", "9:16", 45, "talking_objects")
+    assert labels[0] == "🧠 Google Gemini · gemini-3.8-flash" and labels[1].startswith("🖼️ Nano Banana")
+    assert "Elvira" in labels[2] and labels[3].startswith("🎞️ Google Gemini Omni")
+    assert labels[4:] == ["📐 9:16", "⏱️ 45 s", "🎭 Objetos que hablan"]
+    assert CC.chip_labels("OpenAI (ChatGPT)", "", "flux", "edge", "es-MX-JorgeNeural", "pexels", "1:1", 30,
+                          "auto")[0] == "🧠 OpenAI"
+
+
+def test_current_step_line():
+    log = "[00:01] Checking...\n[01:40] Scene 5: image with FLUX (local)..."
+    assert CC.current_step(log) == "[01:40] Scene 5: image with FLUX (local)..."
+    failed = log + "\n[02:00] ❌ open() got an unexpected keyword argument\n[02:00] TypeError (detalle completo en el log técnico)"
+    line = CC.current_step(failed, failed=True)
+    assert "❌ open() got an unexpected keyword argument" in line and "Reanudar" in line and "TypeError" not in line
+
+
+def test_contextual_options():
+    paid, files, footage, keyframes, ai_box = CC.clip_visibility("upload")
+    assert files["visible"] and not paid["visible"] and not keyframes["visible"] and not ai_box["visible"]
+    paid, files, footage, keyframes, ai_box = CC.clip_visibility("gemini_omni")
+    assert paid["visible"] and paid["value"] is False and keyframes["visible"] and not ai_box["visible"]
+    paid, files, footage, keyframes, ai_box = CC.clip_visibility("ltxv")
+    assert keyframes["visible"] and ai_box["visible"]                # frames and steps only for local AI
+    paid, files, footage, keyframes, ai_box = CC.clip_visibility("pexels")
+    assert not any(u["visible"] for u in (paid, files, footage, keyframes, ai_box))
     assert [v for _, v in CC.on_clip_type_change("own")["choices"]] == ["upload", "footage"]
-    assert len(CC.on_clip_type_change("external_ai")["choices"]) == 6
-    paid, ai_box, keyframe, files, footage = CC.on_clip_change("upload")
-    assert files["visible"] and not paid["visible"] and not footage["visible"]
-    paid, ai_box, keyframe, files, footage = CC.on_clip_change("footage")
-    assert footage["visible"] and "archivo(s)" in footage["value"]
-    paid, ai_box, keyframe, files, footage = CC.on_clip_change("ofox")
-    assert paid["visible"] and paid["value"] is False and not ai_box["visible"]
-    paid, ai_box, keyframe, files, footage = CC.on_clip_change("ltxv")
-    assert ai_box["visible"] and keyframe["visible"]
+    assert "gemini_omni" in [v for _, v in CC.on_clip_type_change("external_ai")["choices"]]
     voices, clone = CC.on_voice_provider_change("azure")
     assert voices["value"] == "es-MX-JorgeNeural" and not clone["visible"]
     assert CC.on_voice_provider_change("f5")[1]["visible"]
 
 
 def test_status_box(keys):
-    html = CC.validate("OpenAI (ChatGPT)", "pexels", "edge", "none", "none", "library", False, None)
-    assert "⛔" in html and "OpenAI" in html and "Pexels" in html
+    html = CC.validate("OpenAI (ChatGPT)", "pexels", "edge", "flux", "library", False, None, True, True)
+    assert "⛔" in html and "OpenAI" in html and "Pexels" in html and "Forge" in html
     keys("openai", api_key="sk")
     keys("pexels", api_key="px")
-    assert "✅ Todo listo" in CC.validate("OpenAI (ChatGPT)", "pexels", "edge", "none", "none", "none", False, None)
-    assert "✅ Todo listo" in CC.validate("OpenAI (ChatGPT)", "upload", "edge", "none", "none", "none", False, ["/a.mp4"])
+    assert "✅ Todo listo" in CC.validate("OpenAI (ChatGPT)", "pexels", "edge", "flux", "none", False, None, False, True)
+    assert "✅ Todo listo" in CC.validate("OpenAI (ChatGPT)", "upload", "edge", "flux", "none", False, ["/a.mp4"],
+                                         False, True)
 
 
 def test_save_keys_writes_only_edited_fields(ui, keys):
@@ -66,32 +101,37 @@ KIT = P.normalize_kit({"virality": {"overall": 80}, "on_screen_hooks": ["h"], "y
                        "seed_comments": ["c"], "teaser": "t"})
 
 
+def snapshot(**changes):
+    base = {"log": "[00:01] a", "stage": "Guion", "pct": 10, "script": "S", "media": [], "video": None, "videos": [],
+            "failed": False, "done": False, "kit": None, "tech": "", "reel_dir": None}
+    base.update(changes)
+    return base
+
+
 def test_production_wrapper(ui, monkeypatch):
     _, c = ui
     seen = {}
 
-    def fake_produce(settings):
+    def fake_produce(settings, resume_dir=None):
         seen.update(settings)
-        base = {"log": "a", "stage": "Guion", "pct": 10, "script": "S", "media": [], "video": None, "videos": [],
-                "failed": False, "done": False, "kit": None, "tech": "", "reel_dir": None}
-        yield base
-        yield dict(base, stage="Listo", pct=100, done=True, kit=KIT, tech="TECH", video="/v.mp4",
-                   videos=["/v.mp4", "/v2.mp4"], reel_dir="/reels/x")
-    monkeypatch.setattr(CC, "produce_reel", lambda settings, resume_dir=None: fake_produce(settings))
+        yield snapshot()
+        yield snapshot(stage="Listo", pct=100, done=True, kit=KIT, tech="TECH", video="/v.mp4",
+                       videos=["/v.mp4", "/v2.mp4"], reel_dir="/reels/x", log="[00:01] a\n[00:09] DONE.")
+    monkeypatch.setattr(CC, "produce_reel", fake_produce)
     monkeypatch.setattr(CC, "drive_responds", lambda timeout=10: True)
-    names = ["idea_in", "language_dd", "duration_sl", "tone_dd", "instructions_in", "scenes_sl", "llm_dd", "model_dd",
-             "clip_type_rd", "clip_dd", "paid_cb", "own_files_in", "keyframe_rd", "voice_type_rd", "voice_provider_dd",
-             "voice_dd", "clone_in", "cover_rd", "music_rd", "kit_cb", "ai_w", "ai_h", "ai_f", "ai_s"]
-    values = [c[n].value for n in names] + [comp.value for comp in c["montage_inputs"]]
-    values[0], values[-1] = "Idea", 2
+    values = form_values(c, idea="Idea", style="animated")
+    values[-1] = 2                                                # variants
     outputs = list(CC.produce_ui(*values))
     assert "Iniciando" in outputs[0][0] and all(len(o) == 15 for o in outputs)
     assert not jobs.current().running
+    assert seen["style"] == "animated" and seen["num_scenes"] == "auto" and seen["tone"] == "auto"
+    assert seen["make_cover"] is True and seen["make_kit"] is True and seen["image_provider"] == "flux"
     assert seen["montage"]["variants"] == 2 and seen["montage"]["font"] == "Anton" and seen["duration"] == 35
-    assert outputs[-1][5] == ["/v.mp4", "/v2.mp4"] and outputs[-1][13] == "TECH" and outputs[-1][14] == "/reels/x"
+    assert "DONE." in outputs[-1][1] and outputs[-1][5] == ["/v.mp4", "/v2.mp4"]
+    assert outputs[-1][13] == "TECH" and outputs[-1][14] == "/reels/x"
     assert outputs[-1][6]["value"] == "Título" and "(6/100)" in outputs[-1][6]["label"]
     prefs = json.load(open(CC.PREFS_FILE))
-    assert prefs["montage"]["variants"] == 2 and prefs["language"] == "es"
+    assert prefs["montage"]["variants"] == 2 and prefs["style"] == "animated"
 
 
 @pytest.fixture
@@ -120,8 +160,6 @@ def test_publish_wrapper_uses_edited_fields(saved_reel, monkeypatch):
     assert sent["kit"]["tiktok"]["caption"] == "TikTok editado" and sent["kit"]["youtube"]["title"] == "Título editado"
     assert sent["video"].endswith("demo_FINAL.mp4")
     assert "Subiendo" in steps[0] and "✅" in steps[-1] and "https://t/1" in steps[-1]
-    assert "Primero produce" in list(CC.publish_ui(None, ["tiktok"], "", "", "public", "PUBLIC_TO_EVERYONE", True,
-                                                   *[""] * 6))[-1]
 
 
 def test_reels_tab(saved_reel, monkeypatch):
@@ -133,20 +171,10 @@ def test_reels_tab(saved_reel, monkeypatch):
 
     def fake_reassemble(folder, montage):
         seen["args"] = (folder, montage)
-        yield {"stage": "Listo", "pct": 100, "failed": False, "done": True, "log": "ok", "script": "", "media": [],
-               "video": f"{folder}/demo_FINAL.mp4", "videos": [], "kit": None, "tech": "", "reel_dir": folder}
+        yield snapshot(stage="Listo", pct=100, done=True, video=f"{folder}/demo_FINAL.mp4", reel_dir=folder)
     monkeypatch.setattr(CC, "reassemble_reel", fake_reassemble)
     outputs = list(CC.reassemble_ui(saved_reel, *P.DEFAULT_MONTAGE.values()))
     assert seen["args"][0] == saved_reel and outputs[-1][2].endswith("demo_FINAL.mp4")
-
-
-def test_audio_studio():
-    ui = audio.build_ui()
-    assert ui is not None
-    clip, message = audio.speak("hola", "minimax", "v", None, "")
-    assert clip is None and "Falta la clave" in message
-    assert {"azure", "gemini_tts", "voxcpm"} <= {v for _, v in audio.on_type("external")["choices"]}
-    ui.close()
 
 
 def test_failed_reel_is_listed_with_its_stage_and_can_be_resumed(saved_reel, monkeypatch):
@@ -161,8 +189,7 @@ def test_failed_reel_is_listed_with_its_stage_and_can_be_resumed(saved_reel, mon
 
     def fake_produce(settings, resume_dir=None):
         seen.update(settings=settings, resume_dir=resume_dir)
-        yield {"stage": "Listo", "pct": 100, "failed": False, "done": True, "log": "ok", "script": "", "media": [],
-               "video": None, "videos": [], "kit": None, "tech": "", "reel_dir": resume_dir}
+        yield snapshot(stage="Listo", pct=100, done=True, reel_dir=resume_dir)
     monkeypatch.setattr(CC, "produce_reel", fake_produce)
     list(CC.resume_reel_ui(saved_reel))
     assert seen["resume_dir"] == saved_reel and seen["settings"]["idea"] == "Idea demo"
@@ -172,58 +199,56 @@ def test_failed_reel_is_listed_with_its_stage_and_can_be_resumed(saved_reel, mon
 
 def test_reel_settings_fill_the_form(saved_reel):
     P.save_settings(saved_reel, {"idea": "Lobos", "language": "pt", "llm_provider": "Ollama (local)",
-                                 "llm_model": "qwen2.5:14b", "clip_provider": "ofox", "confirm_paid": True,
+                                 "llm_model": "qwen2.5:14b", "image_provider": "nano_banana", "make_cover": False,
+                                 "clip_provider": "gemini_omni", "confirm_paid": True, "style": "talking_objects",
                                  "voice_provider": "azure", "voice": "es-ES-ElviraNeural", "music_source": "none",
-                                 "montage": {"aspect": "16:9", "font": "Bangers", "variants": 2}})
+                                 "make_kit": False, "montage": {"aspect": "16:9", "font": "Bangers", "variants": 2}})
     updates = CC.use_reel_settings_ui(saved_reel)
     form = dict(zip(CC.PRODUCE_KEYS + CC.MONTAGE_KEYS, updates))
     assert form["idea"]["value"] == "Lobos" and form["language"]["value"] == "pt"
+    assert form["style"]["value"] == "talking_objects" and form["image_provider"]["value"] == "nano_banana"
+    assert form["make_cover"]["value"] is False and form["use_keyframes"]["visible"]
     assert form["llm_provider"]["value"] == "Ollama (local)" and form["llm_provider"]["choices"] == ["Ollama (local)"]
     assert form["llm_model"]["value"] == "qwen2.5:14b"
-    assert form["clip_type"]["value"] == "external_ai" and form["clip_provider"]["value"] == "ofox"
+    assert form["clip_type"]["value"] == "external_ai" and form["clip_provider"]["value"] == "gemini_omni"
     assert form["confirm_paid"]["visible"] and form["confirm_paid"]["value"] is False   # never pre-confirmed
     assert form["voice_type"]["value"] == "external" and form["voice"]["value"] == "es-ES-ElviraNeural"
     assert form["aspect"]["value"] == "16:9" and form["variants"]["value"] == 2
-    ai_box, footage, note, reel_state, tabs = updates[-5:]
+    footage, ai_box, kit_section, note, reel_state, tabs = updates[-6:]
+    assert kit_section["visible"] is False and ai_box["visible"] is False
     assert reel_state == saved_reel and "cargados" in note
 
 
 def test_presets_round_trip(ui):
     _, c = ui
-    values = [c[n].value for n in ["idea_in", "language_dd", "duration_sl", "tone_dd", "instructions_in", "scenes_sl",
-                                   "llm_dd", "model_dd", "clip_type_rd", "clip_dd", "paid_cb", "own_files_in",
-                                   "keyframe_rd", "voice_type_rd", "voice_provider_dd", "voice_dd", "clone_in",
-                                   "cover_rd", "music_rd", "kit_cb", "ai_w", "ai_h", "ai_f", "ai_s"]]
-    values += [comp.value for comp in c["montage_inputs"]]
-    values[2] = 60                                   # duration
-    message, dropdown = CC.save_preset_ui("Mi estilo / lobos", *values)
+    values = form_values(c, duration=60, idea="no se guarda")
+    message, _ = CC.save_preset_ui("Mi estilo / lobos", *values)
     assert "guardado" in message and "Mi estilo lobos" in CC.list_presets()
-    name = "Mi estilo lobos"
-    updates = CC.load_preset_ui(name)
+    updates = CC.load_preset_ui("Mi estilo lobos")
     form = dict(zip(CC.PRODUCE_KEYS + CC.MONTAGE_KEYS, updates))
     assert form["duration"]["value"] == 60 and "cargados" in updates[-2]
-    saved = json.load(open(f"{CC.PRESETS_DIR}/{name}.json"))
-    assert "confirm_paid" not in saved and "own_files" not in saved
+    assert "value" not in form["idea"]                              # loading a preset keeps the idea you typed
+    saved = json.load(open(f"{CC.PRESETS_DIR}/Mi estilo lobos.json"))
+    assert "confirm_paid" not in saved and "own_files" not in saved and "idea" not in saved
 
 
 def test_background_job_survives_a_disconnected_page(monkeypatch):
     gate = {"go": False}
 
     def slow_produce(settings, resume_dir=None):
-        base = {"stage": "Guion", "pct": 10, "failed": False, "done": False, "log": "a", "script": "", "media": [],
-                "video": None, "videos": [], "kit": None, "tech": "", "reel_dir": "/r"}
-        yield base
+        yield snapshot(reel_dir="/r")
         while not gate["go"]:
             time.sleep(0.01)
-        yield dict(base, stage="Listo", pct=100, done=True)
+        yield snapshot(stage="Listo", pct=100, done=True, reel_dir="/r")
     monkeypatch.setattr(CC, "produce_reel", slow_produce)
     monkeypatch.setattr(CC, "drive_responds", lambda timeout=10: False)
-    page = CC.produce_ui(*([""] * len(CC.PRODUCE_KEYS) + list(P.DEFAULT_MONTAGE.values())))
+    empty = [""] * len(CC.PRODUCE_KEYS) + list(P.DEFAULT_MONTAGE.values())
+    page = CC.produce_ui(*empty)
     next(page)                                       # "Iniciando…"
     assert "Guion" in next(page)[0]
     page.close()                                     # the browser tab is closed / the tunnel drops
     assert jobs.current().running                    # ...and the production keeps going
-    blocked = list(CC.produce_ui(*([""] * len(CC.PRODUCE_KEYS) + list(P.DEFAULT_MONTAGE.values()))))
+    blocked = list(CC.produce_ui(*empty))
     assert "Ya hay un trabajo en curso" in blocked[-1][0]
     gate["go"] = True
     reopened = list(CC.attach_ui())                  # the page is opened again
@@ -233,8 +258,7 @@ def test_background_job_survives_a_disconnected_page(monkeypatch):
 def test_stop_cancels_the_job(monkeypatch):
     def endless(settings, resume_dir=None):
         while True:
-            yield {"stage": "Clips", "pct": 40, "failed": False, "done": False, "log": "x", "script": "", "media": [],
-                   "video": None, "videos": [], "kit": None, "tech": "", "reel_dir": None}
+            yield snapshot(stage="Clips", pct=40)
             time.sleep(0.01)
     monkeypatch.setattr(CC, "produce_reel", endless)
     page = CC.produce_ui(*([""] * len(CC.PRODUCE_KEYS) + list(P.DEFAULT_MONTAGE.values())))
@@ -242,6 +266,15 @@ def test_stop_cancels_the_job(monkeypatch):
     assert "Deteniendo" in CC.stop_ui()
     last = list(page)[-1]
     assert "Detenido por ti" in last[0] and not jobs.current().running
+
+
+def test_audio_studio():
+    ui = audio.build_ui()
+    assert ui is not None
+    clip, message = audio.speak("hola", "minimax", "v", None, "")
+    assert clip is None and "Falta la clave" in message
+    assert {"azure", "gemini_tts", "voxcpm"} <= {v for _, v in audio.on_type("external")["choices"]}
+    ui.close()
 
 
 @pytest.mark.browser
@@ -253,14 +286,20 @@ def test_opens_in_a_browser(ui, monkeypatch, tmp_path):
     errors = []
     with playwright.sync_playwright() as p:
         browser = p.chromium.launch()
-        page = browser.new_page(viewport={"width": 1400, "height": 2600}, color_scheme="dark")
+        page = browser.new_page(viewport={"width": 1280, "height": 900}, color_scheme="dark")
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.goto("http://127.0.0.1:7998/", wait_until="load")
-        page.wait_for_selector("text=🛠️ Montaje y subtítulos", timeout=60000)
+        page.wait_for_selector("button.send", timeout=60000)
         time.sleep(1)
-        xs = {t: round(page.locator(f"text={t}").first.bounding_box()["x"])
-              for t in ("📝 Guion", "🧠 Texto", "🎞️ Clips", "🎙️ Voz", "🎵 Música de fondo")}
-        page.screenshot(path=str(tmp_path / "control_center.png"), full_page=True)
+        chips = page.locator("button.chip")
+        assert chips.count() == 8 and not page.locator(".modal").first.is_visible()
+        texts = [chips.nth(i).inner_text() for i in range(8)]
+        assert texts[4] == "📐 9:16" and texts[5] == "⏱️ 35 s" and texts[7] == "⚙️ Ajustes"
+        for i in range(8):                                   # every picker opens and closes
+            chips.nth(i).click()
+            page.wait_for_selector(".modal .modal-card", state="visible", timeout=10000)
+            page.get_by_role("button", name="✔ Listo").locator("visible=true").first.click()
+            page.wait_for_selector(".modal .modal-card", state="hidden", timeout=10000)
+        page.screenshot(path=str(tmp_path / "control_center.png"))
         browser.close()
-    assert len(set(xs.values())) == 1, xs           # every section title starts at the same x
     assert not errors

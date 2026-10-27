@@ -51,6 +51,44 @@ def default_model_for(provider_key):
     return get_key(provider_key, "chat_model")
 
 
+_NOT_CHAT = ("embed", "tts", "image", "banana", "audio", "whisper", "dall-e", "omni", "veo", "moderation",
+             "transcribe", "realtime", "search", "imagen", "aqa", "learnlm")
+
+
+def list_llm_models(provider_key):
+    """Chat models the provider offers right now (asked to its API), the configured default first.
+    Falls back to the default alone when the provider cannot be reached or has no key yet."""
+    default = default_model_for(provider_key)
+    found = []
+    try:
+        if provider_key == "ollama":
+            found = list_ollama_models()
+        elif provider_key == "gemini":
+            r = requests.get("https://generativelanguage.googleapis.com/v1beta/models", timeout=15,
+                             params={"key": get_key("gemini", "api_key"), "pageSize": 1000})
+            r.raise_for_status()
+            found = [m["name"].split("/", 1)[-1] for m in r.json().get("models", [])
+                     if "generateContent" in m.get("supportedGenerationMethods", [])]
+        elif provider_key == "anthropic":
+            r = requests.get("https://api.anthropic.com/v1/models", timeout=15, params={"limit": 100},
+                             headers={"x-api-key": get_key("anthropic", "api_key"), "anthropic-version": "2023-06-01"})
+            r.raise_for_status()
+            found = [m["id"] for m in r.json().get("data", [])]
+        else:
+            if provider_key == "openai":
+                base, key = "https://api.openai.com/v1", get_key("openai", "api_key")
+            else:
+                name = provider_key.split(":", 1)[1]
+                base, key = get_compat(name, "base_url"), get_compat(name, "api_key")
+            r = requests.get(f"{base.rstrip('/')}/models", headers=bearer(key), timeout=15)
+            r.raise_for_status()
+            found = sorted(m["id"] for m in r.json().get("data", []))
+    except Exception:
+        found = []
+    found = [m for m in found if not any(word in m.lower() for word in _NOT_CHAT)]
+    return ([default] if default else []) + [m for m in found if m != default]
+
+
 def llm_complete(provider_key, model, system_prompt, user_prompt, json_mode=True):
     """Unified chat completion. Returns the raw text answer."""
     if provider_key == "ollama":
@@ -126,10 +164,38 @@ def language_name(code):
     return LANGUAGES.get(code, LANGUAGES["es"])[1]
 
 
-def build_plan_prompt(num_scenes, language="es", duration=35, tone="informativo", instructions="", aspect="9:16"):
+STYLE_GUIDES = {
+    "auto": "Choose the format that fits the idea best (narrated, top list, story, POV, tutorial...).",
+    "narrated": "Documentary-style narration over strong, realistic visuals.",
+    "animated": "Everything is a stylized 3D animation (Pixar-like): every image_prompt and motion_prompt describes a "
+                "3D animated scene, with the same characters in every scene.",
+    "cartoon": "2D cartoon illustration: bold outlines, flat colors, the same characters in every scene.",
+    "talking_objects": "An everyday object, food or animal related to the idea is the narrator: the script is its "
+                       "first-person monologue; every image_prompt shows that same character with a cute, expressive "
+                       "face talking to the camera; motion_prompts include its mouth and face moving.",
+    "listicle": "A top list or countdown of facts or tips, clearly numbered in the script, one item per scene.",
+    "story": "A short story with a hook, a twist and a payoff.",
+    "pov": "Second-person POV (\"POV: you are...\"); visuals in first-person perspective.",
+    "tutorial": "A practical step-by-step tutorial, one step per scene, in the imperative.",
+    "motivational": "A motivational speech that builds emotion, with inspiring cinematic visuals.",
+    "cinematic": "Cinematic realism: film look, dramatic lighting and shallow depth of field in every image_prompt.",
+}
+
+
+def auto_scenes(duration):
+    """About one scene every 7 seconds of narration, between 3 and 10."""
+    return max(3, min(10, round(int(duration) / 7)))
+
+
+def build_plan_prompt(num_scenes, language="es", duration=35, tone="auto", instructions="", aspect="9:16",
+                      style="auto"):
     lang = language_name(language)
     words = int(duration * 2.4)                 # ~2.4 spoken words per second
     shape = FORMAT_WORDS.get(aspect, "vertical 9:16")
+    look = "photorealistic" if style in ("auto", "narrated", "cinematic", "pov", "tutorial", "motivational",
+                                         "listicle", "story") else "in the chosen visual style"
+    tone_text = "the one that fits the idea and the style best" if tone == "auto" else TONES.get(tone, tone)
+    scenes = auto_scenes(duration) if num_scenes in (None, "", "auto", 0) else int(num_scenes)
     extra = f"\nExtra instructions from the creator (follow them): {instructions.strip()}" if instructions.strip() else ""
     return f"""You are an expert director of viral short-form videos (YouTube Shorts, Reels, TikTok).
 Answer ONLY with a valid JSON object with exactly this structure:
@@ -139,25 +205,26 @@ Answer ONLY with a valid JSON object with exactly this structure:
   "on_screen_text": "Max 6 words shown big on screen during the first seconds, in {lang}",
   "script": "Voice-over narration in {lang}, about {words} words (~{duration} seconds read aloud). Only the spoken words: no stage directions, no emojis, no hashtags.",
   "search_terms": ["five", "english", "stock-footage", "search", "keywords"],
-  "cover_prompt": "Detailed cinematic English prompt for a {shape} thumbnail about this topic, photorealistic, high contrast",
+  "cover_prompt": "Detailed English prompt for a {shape} thumbnail about this topic, {look}, high contrast",
   "music_prompt": "English description of instrumental background music for this video: genre, mood, tempo, instruments, no vocals",
   "scenes": [
     {{
       "id": 1,
       "search_query": "2-4 English words to find this shot on a stock-footage site",
-      "image_prompt": "Detailed English prompt for image generation, {shape}, photorealistic",
+      "image_prompt": "Detailed English prompt for image generation, {shape}, {look}",
       "motion_prompt": "Detailed English motion prompt for a video model: camera movement and subject action"
     }}
   ]
 }}
-Tone of the script: {TONES.get(tone, tone)}. The script opens with the hook and ends with a reason to comment,
+Style: {STYLE_GUIDES.get(style, STYLE_GUIDES["auto"])}
+Tone of the script: {tone_text}. The script opens with the hook and ends with a reason to comment,
 follow or share. "script", "hook" and "on_screen_text" in {lang}; everything else in English.
-Generate exactly {num_scenes} scenes, in the same order as the narration.{extra}"""
+Generate exactly {scenes} scenes, in the same order as the narration.{extra}"""
 
 
-def generate_plan(idea, provider_key, model, num_scenes, language="es", duration=35, tone="informativo",
-                  instructions="", aspect="9:16"):
-    prompt = build_plan_prompt(num_scenes, language, duration, tone, instructions, aspect)
+def generate_plan(idea, provider_key, model, num_scenes="auto", language="es", duration=35, tone="auto",
+                  instructions="", aspect="9:16", style="auto"):
+    prompt = build_plan_prompt(num_scenes, language, duration, tone, instructions, aspect, style)
     plan = extract_json(llm_complete(provider_key, model, prompt, f"Reel idea: {idea}"))
     for field in ("script", "scenes"):
         if field not in plan:
@@ -177,7 +244,7 @@ def generate_plan(idea, provider_key, model, num_scenes, language="es", duration
 
 
 # ---------------------------------------------------------------------------
-# 2. Images: FLUX through Forge's API, or any OpenAI-compatible image API
+# 2. Images: FLUX through Forge's API, Nano Banana (Gemini) or any OpenAI-compatible image API
 # ---------------------------------------------------------------------------
 FLUX_SIZES = {"9:16": (768, 1344), "16:9": (1344, 768), "1:1": (1024, 1024)}
 IMAGE_API_SIZES = {"16:9": "1536x1024", "1:1": "1024x1024"}     # 9:16 uses the size saved in your keys
@@ -221,7 +288,84 @@ def image_api_generate(prompt, output_path, size=None):
     return output_path
 
 
+GEMINI_API = "https://generativelanguage.googleapis.com/v1beta"
+
+
+def gemini_interaction(model, content, response_format, timeout=900):
+    """One synchronous call to Gemini's Interactions API (used by Nano Banana and Omni)."""
+    r = requests.post(f"{GEMINI_API}/interactions", timeout=timeout,
+                      headers={"x-goog-api-key": get_key("gemini", "api_key")},
+                      json={"model": model, "input": content, "response_format": response_format,
+                            "store": False, "stream": False, "background": False})
+    if not r.ok:
+        raise RuntimeError(f"Gemini ({model}) rechazó la petición: {api_error(r)}")
+    return r.json()
+
+
+def find_media(body, kind):
+    """The first {"type": kind, "data" or "uri": ...} item anywhere in an Interactions response."""
+    if isinstance(body, dict):
+        if body.get("type") == kind and (body.get("data") or body.get("uri")):
+            return body
+        items = body.values()
+    elif isinstance(body, list):
+        items = body
+    else:
+        return None
+    for item in items:
+        found = find_media(item, kind)
+        if found:
+            return found
+    return None
+
+
+def save_gemini_media(item, output_path):
+    if item.get("data"):
+        data = base64.b64decode(item["data"])
+    else:
+        uri = item["uri"]
+        if "/files/" in uri and ":download" not in uri:
+            uri = f"{uri}:download"
+        r = requests.get(uri, params={"alt": "media"}, headers={"x-goog-api-key": get_key("gemini", "api_key")},
+                         timeout=600)
+        r.raise_for_status()
+        data = r.content
+    with open(output_path, "wb") as f:
+        f.write(data)
+    return output_path
+
+
+def nano_banana_generate(prompt, output_path, aspect="9:16"):
+    model = get_key("gemini", "image_model", "gemini-nano-banana-2.1")
+    body = gemini_interaction(model, prompt, {"type": "image", "mime_type": "image/png", "aspect_ratio": aspect,
+                                              "image_size": "2K"}, timeout=300)
+    item = find_media(body, "image")
+    if not item:
+        raise RuntimeError(f"Nano Banana no devolvió imagen (¿filtro de contenido?): {json.dumps(body)[:300]}")
+    return save_gemini_media(item, output_path)
+
+
+def omni_generate_video(prompt, seconds, aspect, output_path, image_path=None):
+    """Gemini Omni (the Gemini API's successor of Veo): video with sound, optionally starting from an image.
+    It has no length field, so the length goes in the prompt; 1:1 is made in 9:16 and cropped by the montage."""
+    model = get_key("gemini", "video_model", "gemini-omni-1.1-flash")
+    text = f"{prompt}. About {int(round(seconds))} seconds long, no subtitles or text on screen."
+    content = text
+    if image_path:
+        with open(image_path, "rb") as f:
+            image = base64.b64encode(f.read()).decode()
+        content = [{"type": "image", "data": image, "mime_type": "image/png"}, {"type": "text", "text": text}]
+    body = gemini_interaction(model, content, {"type": "video", "aspect_ratio": "16:9" if aspect == "16:9" else "9:16",
+                                               "resolution": get_key("gemini", "video_resolution", "720p")})
+    item = find_media(body, "video")
+    if not item:
+        raise RuntimeError(f"Gemini Omni no devolvió video (¿filtro de contenido?): {json.dumps(body)[:300]}")
+    return save_gemini_media(item, output_path)
+
+
 def generate_image(provider, prompt, output_path, aspect="9:16"):
+    if provider == "nano_banana":
+        return nano_banana_generate(prompt, output_path, aspect)
     if provider == "flux":
         width, height = FLUX_SIZES.get(aspect, FLUX_SIZES["9:16"])
         return forge_txt2img(prompt, output_path, width, height)
@@ -591,12 +735,19 @@ AI_VIDEO_CLIENTS = {   # provider -> (create task, min seconds, max seconds)
 }
 
 
-def generate_ai_video(provider, prompt, seconds, aspect, output_path, on_raw=None, timeout=1800):
-    """One paid text-to-video clip. seconds is clamped to what the provider accepts."""
+def generate_ai_video(provider, prompt, seconds, aspect, output_path, on_raw=None, timeout=1800, image_path=None):
+    """One paid clip. seconds is clamped to what the provider accepts. image_path (providers that accept a
+    first frame): image-to-video."""
     label = CLIP_PROVIDERS[provider]["label"]
+    raw = on_raw or (lambda m: None)
+    if provider == "gemini_omni":
+        raw(f"{label} | generating {'image' if image_path else 'text'}-to-video, ~{seconds:.0f} s, {aspect}")
+        started = time.time()
+        omni_generate_video(prompt, seconds, aspect, output_path, image_path)
+        raw(f"{label} | done in {int(time.time() - started)} s")
+        return output_path
     create, low, high = AI_VIDEO_CLIENTS[provider]
     seconds = int(min(max(round(seconds), low), high))
-    raw = on_raw or (lambda m: None)
     task, poll, download_headers = create(prompt, seconds, aspect)
     if not task:
         raise RuntimeError(f"{label} no devolvió el ID de la tarea.")
@@ -1540,9 +1691,11 @@ def _exists(path):
 
 def produce_reel(settings, resume_dir=None):
     """Generator. Each kind of content uses its own provider, local or external, with no cross-conditions.
-    settings keys: idea, language, duration, tone, instructions, num_scenes, llm_provider, llm_model,
-    clip_provider, confirm_paid, own_files, keyframe_provider, voice_provider, voice, clone_sample,
-    cover_provider, music_source, make_kit, ai_width, ai_height, ai_frames, ai_steps, montage (dict).
+    settings keys: idea, language, duration, style, tone, instructions, num_scenes, llm_provider, llm_model,
+    image_provider, make_cover, use_keyframes, clip_provider, confirm_paid, own_files, voice_provider, voice,
+    clone_sample, music_source, make_kit, ai_width, ai_height, ai_frames, ai_steps, montage (dict).
+    tone and num_scenes accept "auto"; the image engine makes the cover, the first frame of clips that accept
+    one and the AI photos.
     resume_dir: an existing reel folder to continue; every step whose file is already there is reused."""
     run = ReelRun()
     s = dict(settings)
@@ -1557,7 +1710,8 @@ def produce_reel(settings, resume_dir=None):
         if not llm_key:
             raise RuntimeError(f"Proveedor LLM desconocido: {s['llm_provider']}")
         clip_provider, voice_provider = s["clip_provider"], s["voice_provider"]
-        cover_provider, keyframe_provider = s.get("cover_provider", "none"), s.get("keyframe_provider", "none")
+        image_provider = s.get("image_provider", "flux")
+        make_cover, use_keyframes = s.get("make_cover", True), s.get("use_keyframes", True)
         music_source, language = s.get("music_source", "none"), s.get("language", "es")
         montage = montage_options(s.get("montage"))
         aspect = montage["aspect"]
@@ -1573,8 +1727,9 @@ def produce_reel(settings, resume_dir=None):
         if not drive_responds():
             raise RuntimeError("Google Drive no responde (pasa tras horas de sesión). Vuelve a ejecutar la Celda 1 "
                                "para reconectarlo y luego la Celda 7.")
-        errors, warnings = check_selection(llm_key, clip_provider, voice_provider, cover_provider, keyframe_provider,
-                                           music_source, s.get("confirm_paid"), len(own_files) or len(saved_own))
+        errors, warnings = check_selection(llm_key, clip_provider, voice_provider, image_provider, music_source,
+                                           s.get("confirm_paid"), len(own_files) or len(saved_own), make_cover,
+                                           use_keyframes)
         for w in warnings:
             run.log(f"⚠️ {re.sub('<[^>]+>', '', w)}")
         if errors:
@@ -1603,11 +1758,11 @@ def produce_reel(settings, resume_dir=None):
                 plan = json.load(f)
         else:
             run.log(f"Script with {s['llm_provider']} ({s['llm_model']}): {LANGUAGES.get(language, ('?',))[0]}, "
-                    f"~{s.get('duration', 35)} s, tone {s.get('tone', 'informativo')}...")
+                    f"~{s.get('duration', 35)} s, style {s.get('style', 'auto')}, tone {s.get('tone', 'auto')}...")
             yield run.snapshot()
-            plan = generate_plan(idea, llm_key, s["llm_model"], int(s.get("num_scenes", 5)), language,
-                                 int(s.get("duration", 35)), s.get("tone", "informativo"), s.get("instructions", ""),
-                                 aspect)
+            plan = generate_plan(idea, llm_key, s["llm_model"], s.get("num_scenes", "auto"), language,
+                                 int(s.get("duration", 35)), s.get("tone", "auto"), s.get("instructions", ""),
+                                 aspect, s.get("style", "auto"))
             with open(f"{reel_dir}/plan.json", "w", encoding="utf-8") as f:
                 json.dump(plan, f, indent=2, ensure_ascii=False)
             with open(f"{reel_dir}/script.txt", "w", encoding="utf-8") as f:
@@ -1636,10 +1791,10 @@ def produce_reel(settings, resume_dir=None):
                     run.log(f"⚠️ Publish kit failed, the reel continues: {exc}")
             yield run.snapshot()
 
-        # --- 3. Images: cover, first frames for local AI, or the photos themselves -------
-        photo_source = clip.get("image_provider")                 # set for "AI photos with motion"
-        keyframe_source = keyframe_provider if clip["type"] == "local_ai" and keyframe_provider != "none" else None
-        scene_image_source = photo_source or keyframe_source
+        # --- 3. Images (one engine): cover, first frame of each clip, or the photos themselves -------
+        scene_images = clip["type"] == "ai_image" or (clip.get("accepts_image") and use_keyframes)
+        scene_image_source = image_provider if scene_images else None
+        cover_provider = image_provider if make_cover else "none"
         if cover_provider != "none" and plan.get("cover_prompt"):
             run.set("Portada", 12)
             cover = f"{reel_dir}/cover.png"
@@ -1662,7 +1817,7 @@ def produce_reel(settings, resume_dir=None):
                 images.append(path)
                 run.media.append((path, f"Escena {i}"))
                 yield run.snapshot()
-        if "flux" in (cover_provider, scene_image_source) and clip["type"] == "local_ai":
+        if image_provider == "flux" and clip["type"] == "local_ai":
             forge_unload()          # free VRAM before ComfyUI loads the video model
 
         # --- 4. Voice (audio) + the timing of every word ----------------------------
@@ -1757,11 +1912,12 @@ def produce_reel(settings, resume_dir=None):
                 run.set(f"Clip IA {i}/{len(scenes)} ({clip['label']})", 32 + 38 * (i - 1) / len(scenes))
                 path = f"{reel_dir}/clips/ai_{i:02}.mp4"
                 if not reuse(path, f"Clip {i} (ya pagado)"):
-                    run.log(f"Scene {i}: {clip['label']} text-to-video (paid)...")
+                    run.log(f"Scene {i}: {clip['label']} {'image' if images else 'text'}-to-video (paid)...")
                     yield run.snapshot()
                     prompt = f"{scene['image_prompt']}. {scene['motion_prompt']}"
-                    yield from _wait_for(run, lambda: generate_ai_video(clip_provider, prompt, seconds, aspect, path,
-                                                                        on_raw=run.tech))
+                    yield from _wait_for(run, lambda: generate_ai_video(
+                        clip_provider, prompt, seconds, aspect, path, on_raw=run.tech,
+                        image_path=images[i - 1] if images else None))
                     run.log(f"Scene {i}: clip ready.")
                 clips.append(path)
                 run.media.append((path, f"Clip {i}"))

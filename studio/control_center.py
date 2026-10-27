@@ -1,6 +1,7 @@
-"""Cell 7: the Control Center. Pick every provider, see in red what is missing, test and save the API keys,
-follow each reel live (it keeps running if the page disconnects), resume a failed reel from the failed step,
-reuse the settings of any reel or preset, re-assemble saved reels and publish them."""
+"""Cell 7: the Control Center. A simple composer (idea, length, format and one engine per kind of content) with
+every advanced option in a settings window that only shows what applies to the current choice. Productions
+keep running if the page disconnects, a failed reel resumes from the failed step, and any reel's settings or a
+saved preset can be reused. Also: API keys, saved reels, re-assembly and publishing."""
 import html
 import gradio as gr
 from .lib import *
@@ -12,12 +13,16 @@ from . import jobs
 # ---------------------------------------------------------------------------
 PREFS_FILE = f"{CONFIG_DIR}/control_center_prefs.json"
 FONTS = ["DejaVu Sans"]      # refreshed from Drive/fonts every time the UI is built
+SCENE_CHOICES = [("Automático (según la duración)", "auto")] + [(str(n), str(n)) for n in range(3, 11)]
+TONE_CHOICES = [("Automático", "auto")] + [(k.capitalize().replace("Dramatico", "Dramático")
+                                             .replace("Polemico", "Polémico"), k) for k in TONES]
 DEFAULT_PREFS = {
-    "language": "es", "duration": 35, "tone": "informativo", "instructions": "", "num_scenes": 5,
+    "language": "es", "duration": 35, "style": "auto", "tone": "auto", "instructions": "", "num_scenes": "auto",
     "llm_provider": "OpenAI (ChatGPT)", "llm_model": "",
-    "clip_type": "stock", "clip_provider": "pexels", "keyframe_provider": "flux",
+    "image_provider": "flux", "make_cover": True, "use_keyframes": True,
+    "clip_type": "stock", "clip_provider": "pexels",
     "voice_type": "local", "voice_provider": "edge", "voice": "es-MX-JorgeNeural",
-    "cover_provider": "none", "music_source": "library", "make_kit": True,
+    "music_source": "library", "make_kit": True, "show_tech": False,
     "ai_width": 480, "ai_height": 832, "ai_frames": 49, "ai_steps": 20,
     "montage": dict(DEFAULT_MONTAGE),
 }
@@ -38,25 +43,27 @@ def load_prefs():
 def normalize_settings(saved):
     """Defaults + saved values (form prefs, a preset or a reel's settings.json), never a choice that no
     longer exists. Also used to fill the form when settings are loaded."""
+    saved = saved or {}
     prefs = json.loads(json.dumps(DEFAULT_PREFS))
-    prefs.update({k: v for k, v in (saved or {}).items() if k in DEFAULT_PREFS and k != "montage" and v is not None})
-    prefs["montage"].update((saved or {}).get("montage") or {})
-    prefs["idea"] = (saved or {}).get("idea", "")
+    prefs.update({k: v for k, v in saved.items() if k in DEFAULT_PREFS and k != "montage" and v is not None})
+    prefs["montage"].update(saved.get("montage") or {})
+    prefs["idea"] = saved.get("idea", "")
     prefs["montage"] = montage_options(prefs["montage"])
     if prefs["montage"]["font"] not in FONTS:
         prefs["montage"]["font"] = "Anton" if "Anton" in FONTS else FONTS[0]
-    # Never reopen with a choice that no longer exists.
     if prefs["llm_provider"] not in llm_provider_choices():
         prefs["llm_provider"] = DEFAULT_PREFS["llm_provider"]
     prefs["llm_type"] = llm_kind(prefs["llm_provider"])
     if prefs["clip_provider"] not in CLIP_PROVIDERS:
-        prefs["clip_provider"] = "pexels"
+        prefs["clip_provider"] = DEFAULT_PREFS["clip_provider"]
     prefs["clip_type"] = CLIP_PROVIDERS[prefs["clip_provider"]]["type"]
     if prefs["voice_provider"] not in VOICE_PROVIDERS:
         prefs.update(voice_provider="edge", voice="es-MX-JorgeNeural")
     prefs["voice_type"] = VOICE_PROVIDERS[prefs["voice_provider"]]["type"]
-    for key, allowed in (("cover_provider", IMAGE_PROVIDERS), ("keyframe_provider", IMAGE_PROVIDERS),
-                         ("music_source", MUSIC_SOURCES), ("language", LANGUAGES), ("tone", TONES)):
+    prefs["num_scenes"] = str(prefs["num_scenes"])
+    for key, allowed in (("image_provider", IMAGE_PROVIDERS), ("music_source", MUSIC_SOURCES),
+                         ("language", LANGUAGES), ("style", STYLES), ("tone", ["auto"] + list(TONES)),
+                         ("num_scenes", [v for _, v in SCENE_CHOICES])):
         if prefs[key] not in allowed:
             prefs[key] = DEFAULT_PREFS[key]
     return prefs
@@ -69,6 +76,12 @@ def save_prefs(settings):
             json.dump(keep, f, indent=2, ensure_ascii=False)
     except Exception:
         pass
+
+
+def save_show_tech(show):
+    prefs = read_json(PREFS_FILE)
+    prefs["show_tech"] = bool(show)
+    save_prefs(prefs)
 
 
 # ---------------------------------------------------------------------------
@@ -84,20 +97,36 @@ def progress_bar_html(stage="Esperando", pct=0, failed=False, done=False):
             f"<div style='width:{pct}%;background:{color};height:100%;transition:width .4s'></div></div></div>")
 
 
+def current_step(log, failed=False):
+    """The one line shown under the progress bar: the latest step, or the short reason of a failure.
+    The complete detail (tracebacks, HTTP bodies) is in the technical log."""
+    lines = [l for l in (log or "").splitlines() if l.strip()]
+    if not lines:
+        return ""
+    if failed:
+        errors = [l for l in lines if "❌" in l]
+        reason = (errors[-1] if errors else lines[-1])[:180]
+        return f"{html.escape(reason)}<br>🔁 <b>Reanudar</b> sigue desde aquí sin repetir lo ya hecho."
+    return html.escape(lines[-1][:180])
+
+
+def step_html(text):
+    return f"<div class='step-line'>{text}</div>" if text else ""
+
+
 def status_html(errors, warnings):
+    """Compact: only what blocks the run (red) and what to know (amber)."""
+    box = ""
     if errors:
         items = "".join(f"<li>{e}</li>" for e in errors)
         box = (f"<div style='border:1px solid #dc2626;background:rgba(220,38,38,.12);color:#ef4444;"
-               f"padding:10px 14px;border-radius:8px'><b>⛔ Falta algo antes de producir:</b>"
-               f"<ul style='margin:6px 0 0 18px'>{items}</ul></div>")
-    else:
-        box = ("<div style='border:1px solid #16a34a;background:rgba(22,163,74,.12);color:#22c55e;"
-               "padding:10px 14px;border-radius:8px'><b>✅ Todo listo para producir.</b></div>")
+               f"padding:8px 12px;border-radius:10px'><b>⛔ Falta algo antes de producir:</b>"
+               f"<ul style='margin:4px 0 0 18px'>{items}</ul></div>")
     if warnings:
         items = "".join(f"<li>{w}</li>" for w in warnings)
         box += (f"<div style='border:1px solid #d97706;background:rgba(217,119,6,.12);color:#f59e0b;"
-                f"padding:8px 14px;border-radius:8px;margin-top:6px'><ul style='margin:0 0 0 18px'>{items}</ul></div>")
-    return box
+                f"padding:6px 12px;border-radius:10px;margin-top:6px'><ul style='margin:0 0 0 18px'>{items}</ul></div>")
+    return box or ("<div style='color:#22c55e;font-size:13px;padding:2px 4px'>✅ Todo listo para producir.</div>")
 
 
 def message_html(ok, message):
@@ -110,15 +139,36 @@ def llm_key_for(llm_name):
     return llm_provider_choices().get(llm_name, "openai")
 
 
-def validate(llm_name, clip_provider, voice_provider, cover_provider, keyframe_provider, music_source,
-             confirm_paid, own_files):
-    errors, warnings = check_selection(llm_key_for(llm_name), clip_provider, voice_provider, cover_provider,
-                                       keyframe_provider, music_source, confirm_paid, len(own_files or []))
+def validate(llm_name, clip_provider, voice_provider, image_provider, music_source, confirm_paid, own_files,
+             make_cover, use_keyframes):
+    errors, warnings = check_selection(llm_key_for(llm_name), clip_provider, voice_provider, image_provider,
+                                       music_source, confirm_paid, len(own_files or []), make_cover, use_keyframes)
     return status_html(errors, warnings)
 
 
 # ---------------------------------------------------------------------------
-# Cascading pickers
+# Chips: the engine pickers of the composer show what is chosen
+# ---------------------------------------------------------------------------
+def short(text, n=22):
+    text = str(text or "")
+    return text if len(text) <= n else text[:n - 1] + "…"
+
+
+def chip_labels(llm_name, model, image_provider, voice_provider, voice, clip_provider, aspect, duration, style):
+    voice_name = dict((v, l) for l, v in voice_choices(voice_provider)).get(voice, voice) if voice_provider else ""
+    return [f"🧠 {short(llm_name.split(' (')[0], 14)}" + (f" · {short(model, 18)}" if model else ""),
+            f"🖼️ {short(IMAGE_PROVIDERS.get(image_provider, {}).get('label', image_provider).split(' (')[0], 16)}",
+            f"🎙️ {short(VOICE_PROVIDERS[voice_provider]['label'].split(' (')[0], 12)} · {short(voice_name, 16)}",
+            f"🎞️ {short(CLIP_PROVIDERS[clip_provider]['label'].split(' (')[0], 22)}",
+            f"📐 {aspect}", f"⏱️ {int(duration)} s", f"🎭 {short(STYLES.get(style, style).split(' ', 1)[-1], 22)}"]
+
+
+def refresh_chips(*values):
+    return [gr.update(value=label) for label in chip_labels(*values)]
+
+
+# ---------------------------------------------------------------------------
+# Cascading pickers (they react to the user only, so loading saved settings is never undone by them)
 # ---------------------------------------------------------------------------
 def on_llm_type_change(llm_type):
     names = llm_names_by_kind(llm_type)
@@ -126,14 +176,20 @@ def on_llm_type_change(llm_type):
 
 
 def on_llm_change(llm_name):
+    """The provider's own model list (asked live), its configured default first."""
     if not llm_name:
         return gr.update()
-    key = llm_key_for(llm_name)
-    if key == "ollama":
-        models = list_ollama_models()
-        return gr.update(choices=models, value=models[0] if models else "")
-    model = default_model_for(key)
-    return gr.update(choices=[model] if model else [], value=model)
+    models = list_llm_models(llm_key_for(llm_name))
+    return gr.update(choices=models, value=models[0] if models else "")
+
+
+def refresh_models(llm_name, current):
+    models = list_llm_models(llm_key_for(llm_name))
+    if current and current not in models:
+        models = [current] + models
+    note = f"{len(models)} modelo(s) disponibles." if len(models) > 1 else \
+        "No se pudo pedir la lista (¿falta la clave?): escribe el nombre del modelo."
+    return gr.update(choices=models, value=current or (models[0] if models else "")), note
 
 
 def on_clip_type_change(clip_type):
@@ -141,15 +197,17 @@ def on_clip_type_change(clip_type):
     return gr.update(choices=choices, value=choices[0][1])
 
 
-def on_clip_change(clip_provider):
-    """Paid confirmation only for external AI; base image and settings only for local AI (Wan/LTX accept a
-    first frame); the upload box only for "files I upload"; the folder hint only for Drive/footage."""
-    kind = CLIP_PROVIDERS[clip_provider]["type"]
+def clip_visibility(clip_provider):
+    """Paid confirmation (external AI), file box (uploads), folder note (footage), the first-frame option
+    (clips that accept an image) and the local AI settings (Wan/LTX)."""
+    clip = CLIP_PROVIDERS[clip_provider]
     found = len(footage_files()) if clip_provider == "footage" else 0
-    return (gr.update(visible=kind == "external_ai", value=False), gr.update(visible=kind == "local_ai"),
-            gr.update(visible=kind == "local_ai"), gr.update(visible=clip_provider == "upload"),
+    return (gr.update(visible=clip["type"] == "external_ai", value=False),
+            gr.update(visible=clip_provider == "upload"),
             gr.update(visible=clip_provider == "footage",
-                      value=f"📂 `{FOOTAGE_DIR}` · {found} archivo(s). Se usan en orden de nombre."))
+                      value=f"📂 `{FOOTAGE_DIR}` · {found} archivo(s). Se usan en orden de nombre."),
+            gr.update(visible=bool(clip.get("accepts_image"))),
+            gr.update(visible=clip["type"] == "local_ai"))
 
 
 def on_voice_type_change(voice_type):
@@ -164,18 +222,21 @@ def on_voice_provider_change(voice_provider):
 
 
 # ---------------------------------------------------------------------------
-# Montage controls (built twice: for new reels and for "Volver a montar")
+# Montage controls (in the settings window and in "Volver a montar")
 # ---------------------------------------------------------------------------
 MONTAGE_KEYS = list(DEFAULT_MONTAGE)
 
 
-def build_montage_controls(m):
-    """Returns the components in MONTAGE_KEYS order."""
+def build_montage_controls(m, aspect=None):
+    """Returns the components in MONTAGE_KEYS order. `aspect`: an aspect component created elsewhere (the
+    composer's format picker); without it the format is part of these controls."""
     c = {}
-    with gr.Row():
+    if aspect is None:
         c["aspect"] = gr.Radio([("9:16 vertical", "9:16"), ("16:9 horizontal", "16:9"), ("1:1 cuadrado", "1:1")],
                                value=m["aspect"], label="Formato")
-        c["fit"] = gr.Radio([(v, k) for k, v in FITS.items()], value=m["fit"], label="Clips con otra forma")
+    else:
+        c["aspect"] = aspect
+    c["fit"] = gr.Radio([(v, k) for k, v in FITS.items()], value=m["fit"], label="Clips con otra forma")
     with gr.Row():
         c["pace"] = gr.Dropdown([(v, k) for k, v in PACES.items()], value=m["pace"], label="Ritmo de cortes")
         c["transition"] = gr.Dropdown([(v, k) for k, v in TRANSITIONS.items()], value=m["transition"],
@@ -366,12 +427,12 @@ def publish_ui(ref, platforms, schedule, timezone, yt_privacy, tt_privacy, first
 
 
 # ---------------------------------------------------------------------------
-# Production
+# Production: a background job the page only watches
 # ---------------------------------------------------------------------------
-PRODUCE_KEYS = ["idea", "language", "duration", "tone", "instructions", "num_scenes", "llm_provider", "llm_model",
-                "clip_type", "clip_provider", "confirm_paid", "own_files", "keyframe_provider", "voice_type",
-                "voice_provider", "voice", "clone_sample", "cover_provider", "music_source", "make_kit",
-                "ai_width", "ai_height", "ai_frames", "ai_steps"]
+PRODUCE_KEYS = ["idea", "language", "duration", "style", "tone", "instructions", "num_scenes", "llm_provider",
+                "llm_model", "image_provider", "make_cover", "use_keyframes", "clip_type", "clip_provider",
+                "confirm_paid", "own_files", "voice_type", "voice_provider", "voice", "clone_sample", "music_source",
+                "make_kit", "ai_width", "ai_height", "ai_frames", "ai_steps"]
 
 
 def gallery_items(media):
@@ -382,15 +443,17 @@ def form_settings(values):
     """The production form (PRODUCE_KEYS + montage controls, in that order) as a settings dict."""
     settings = dict(zip(PRODUCE_KEYS, values[:len(PRODUCE_KEYS)]))
     settings["montage"] = montage_options(dict(zip(MONTAGE_KEYS, values[len(PRODUCE_KEYS):])))
-    for key in ("duration", "num_scenes", "ai_width", "ai_height", "ai_frames", "ai_steps"):
+    for key in ("duration", "ai_width", "ai_height", "ai_frames", "ai_steps"):
         settings[key] = int(settings[key] or DEFAULT_PREFS[key])
+    settings["num_scenes"] = str(settings.get("num_scenes") or "auto")
     return settings
 
 
 def snapshot_outputs(snap, shown):
     """One snapshot -> the 15 production outputs. `shown` remembers the kit already on screen."""
     outputs = (progress_bar_html(snap["stage"], snap["pct"], snap["failed"], snap["done"]),
-               snap["script"], gallery_items(snap["media"]), snap["log"], snap["video"], snap["videos"] or None)
+               step_html(current_step(snap["log"], snap["failed"])), snap["script"], gallery_items(snap["media"]),
+               snap["video"], snap["videos"] or None)
     if snap["kit"] is not shown.get("kit", "unset"):          # only refresh the kit fields when the kit changes
         shown["kit"] = snap["kit"]
         kit_part = tuple(kit_updates(snap["kit"]))
@@ -422,7 +485,7 @@ def start_job_ui(kind, label, factory):
 
 def produce_ui(*values):
     # Instant feedback: if even this does not show up, the problem is the connection to the UI, not the pipeline.
-    yield (progress_bar_html("Iniciando…", 0), "", [], f"Starting... (live copy of this log: {ReelRun.LOG_FILE})",
+    yield (progress_bar_html("Iniciando…", 0), step_html(f"Registro en vivo también en {ReelRun.LOG_FILE}"), "", [],
            None, None) + tuple(gr.update() for _ in range(7)) + ("", gr.update())
     settings = form_settings(values)
     if drive_responds():                       # never block the run on a stale Drive just to remember choices
@@ -476,6 +539,7 @@ def save_preset(name, settings):
     os.makedirs(PRESETS_DIR, exist_ok=True)
     data = {k: v for k, v in settings.items() if k not in SETTINGS_SKIPPED and not k.startswith("_")}
     data.pop("confirm_paid", None)                 # a preset never pre-approves a charge
+    data.pop("idea", None)                         # a preset is a way of making reels, not one reel
     with open(f"{PRESETS_DIR}/{name}.json", "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
     return f"✅ Preset «{name}» guardado en Drive.", gr.update(choices=list_presets(), value=name)
@@ -485,61 +549,65 @@ def save_preset_ui(name, *values):
     return save_preset(name, form_settings(values))
 
 
-def settings_updates(saved, keep_confirmation=False):
-    """Updates for every production input (PRODUCE_KEYS + montage, in order) plus the AI-settings box and the
-    footage note, so the whole form shows these settings. Programmatic updates do not fire the cascading
-    pickers (they listen to user input only), so nothing here is overwritten afterwards."""
+FORM_EXTRAS = 3      # after the form inputs: footage note, local-AI box, kit section
+
+
+def settings_updates(saved, keep_idea=True):
+    """Updates for every production input (PRODUCE_KEYS + montage, in order) plus the footage note, the
+    local-AI settings box and the kit section."""
     p = normalize_settings(saved)
-    kind = CLIP_PROVIDERS[p["clip_provider"]]["type"]
+    clip = CLIP_PROVIDERS[p["clip_provider"]]
+    kind = clip["type"]
     model = p["llm_model"] or default_model_for(llm_key_for(p["llm_provider"]))
     voices = voice_choices(p["voice_provider"])
     if p["voice"] and p["voice"] not in [v for _, v in voices]:
         voices = [(p["voice"], p["voice"])] + voices
     values = {
-        "idea": gr.update(value=p["idea"]), "language": gr.update(value=p["language"]),
-        "duration": gr.update(value=p["duration"]), "tone": gr.update(value=p["tone"]),
+        "idea": gr.update(value=p["idea"]) if keep_idea and p["idea"] else gr.update(),
+        "language": gr.update(value=p["language"]), "duration": gr.update(value=p["duration"]),
+        "style": gr.update(value=p["style"]), "tone": gr.update(value=p["tone"]),
         "instructions": gr.update(value=p["instructions"]), "num_scenes": gr.update(value=p["num_scenes"]),
         "llm_provider": gr.update(choices=llm_names_by_kind(p["llm_type"]), value=p["llm_provider"]),
         "llm_model": gr.update(choices=[model] if model else [], value=model),
+        "image_provider": gr.update(value=p["image_provider"]), "make_cover": gr.update(value=p["make_cover"]),
+        "use_keyframes": gr.update(value=p["use_keyframes"], visible=bool(clip.get("accepts_image"))),
         "clip_type": gr.update(value=kind),
         "clip_provider": gr.update(choices=clip_provider_choices(kind), value=p["clip_provider"]),
-        "confirm_paid": gr.update(visible=kind == "external_ai",
-                                  value=bool(keep_confirmation and (saved or {}).get("confirm_paid"))),
+        "confirm_paid": gr.update(visible=kind == "external_ai", value=False),   # a charge is never pre-approved
         "own_files": gr.update(visible=p["clip_provider"] == "upload", value=None),
-        "keyframe_provider": gr.update(visible=kind == "local_ai", value=p["keyframe_provider"]),
         "voice_type": gr.update(value=p["voice_type"]),
         "voice_provider": gr.update(choices=voice_provider_choices(p["voice_type"]), value=p["voice_provider"]),
         "voice": gr.update(choices=voices, value=p["voice"] or (voices[0][1] if voices else "")),
         "clone_sample": gr.update(visible=p["voice_provider"] == "f5", value=None),
-        "cover_provider": gr.update(value=p["cover_provider"]), "music_source": gr.update(value=p["music_source"]),
-        "make_kit": gr.update(value=p["make_kit"]),
+        "music_source": gr.update(value=p["music_source"]), "make_kit": gr.update(value=p["make_kit"]),
         "ai_width": gr.update(value=p["ai_width"]), "ai_height": gr.update(value=p["ai_height"]),
         "ai_frames": gr.update(value=p["ai_frames"]), "ai_steps": gr.update(value=p["ai_steps"]),
     }
     updates = [values[k] for k in PRODUCE_KEYS] + [gr.update(value=p["montage"][k]) for k in MONTAGE_KEYS]
     footage = f"📂 `{FOOTAGE_DIR}` · {len(footage_files())} archivo(s). Se usan en orden de nombre."
-    return updates + [gr.update(visible=kind == "local_ai"),
-                      gr.update(visible=p["clip_provider"] == "footage", value=footage)]
+    return updates + [gr.update(visible=p["clip_provider"] == "footage", value=footage),
+                      gr.update(visible=kind == "local_ai"), gr.update(visible=p["make_kit"])]
+
+
+def blank_form(*messages):
+    return [gr.update() for _ in range(len(PRODUCE_KEYS) + len(MONTAGE_KEYS) + FORM_EXTRAS)] + list(messages)
 
 
 def load_preset_ui(name):
     if not name or name not in list_presets():
-        return [gr.update() for _ in range(len(PRODUCE_KEYS) + len(MONTAGE_KEYS) + 2)] + \
-               ["Elige un preset guardado.", gr.update()]
+        return blank_form("Elige un preset guardado.", gr.update())
     data = read_json(f"{PRESETS_DIR}/{name}.json")
-    return settings_updates(data) + [f"✅ Ajustes del preset «{name}» cargados.", gr.update()]
+    return settings_updates(data, keep_idea=False) + [f"✅ Ajustes del preset «{name}» cargados.", gr.update()]
 
 
 def use_reel_settings_ui(folder):
     """Loads a reel's settings into the production form and points «Reanudar» at that reel."""
     if not folder or not os.path.isdir(folder):
-        return [gr.update() for _ in range(len(PRODUCE_KEYS) + len(MONTAGE_KEYS) + 2)] + \
-               ["Elige un reel primero.", gr.update(), gr.update()]
+        return blank_form("Elige un reel primero.", gr.update(), gr.update())
     saved = load_settings(folder)
     if not saved:
-        return [gr.update() for _ in range(len(PRODUCE_KEYS) + len(MONTAGE_KEYS) + 2)] + \
-               ["Este reel no tiene ajustes guardados.", gr.update(), gr.update()]
-    return settings_updates(saved) + [f"✅ Ajustes de «{os.path.basename(folder)}» cargados en «🎬 Producir reel».",
+        return blank_form("Este reel no tiene ajustes guardados.", gr.update(), gr.update())
+    return settings_updates(saved) + [f"✅ Ajustes de «{os.path.basename(folder)}» cargados en «🎬 Producir».",
                                       folder, gr.Tabs(selected="produce")]
 
 
@@ -651,27 +719,6 @@ def show_reel(folder):
         tuple(kit_updates(kit))
 
 
-def resume_reel_ui(folder):
-    """Continues a reel with the settings it was made with."""
-    saved = load_settings(folder) if folder else {}
-    if not saved:
-        yield progress_bar_html("Este reel no tiene ajustes guardados: usa «♻️ Usar estos ajustes».", 0, failed=True), \
-            "", gr.update()
-        return
-    settings = normalize_settings(saved)
-    settings["confirm_paid"] = bool(saved.get("confirm_paid"))
-    for snap_outputs in start_job_ui("produce", f"{os.path.basename(folder)} (reanudado)",
-                                     lambda: produce_reel(settings, resume_dir=folder)):
-        yield snap_outputs[0], snap_outputs[3], snap_outputs[4]
-
-
-def save_reel_preset_ui(folder, name):
-    saved = load_settings(folder) if folder else {}
-    if not saved:
-        return "Elige un reel con ajustes guardados.", gr.update()
-    return save_preset(name, saved)
-
-
 def regenerate_kit(path, llm_name, llm_model):
     """New kit for a saved reel, written by the LLM currently selected in the production tab."""
     folder = reel_folder(path)
@@ -695,147 +742,217 @@ def regenerate_kit(path, llm_name, llm_model):
         return (f"❌ No se pudo regenerar: {exc}",) + tuple(gr.update() for _ in range(7))
 
 
+def reel_job_outputs(outputs):
+    """Production outputs -> the reels tab's (progress bar, current step, video)."""
+    return outputs[0], outputs[1], outputs[4] if outputs[4] else gr.update()
+
+
+def resume_reel_ui(folder):
+    """Continues a reel with the settings it was made with."""
+    saved = load_settings(folder) if folder else {}
+    if not saved:
+        yield progress_bar_html("Este reel no tiene ajustes guardados: usa «♻️ Usar estos ajustes».", 0, failed=True), \
+            "", gr.update()
+        return
+    settings = normalize_settings(saved)
+    settings["confirm_paid"] = bool(saved.get("confirm_paid"))       # it was confirmed when the reel was made
+    for outputs in start_job_ui("produce", f"{os.path.basename(folder)} (reanudado)",
+                                lambda: produce_reel(settings, resume_dir=folder)):
+        yield reel_job_outputs(outputs)
+
+
+def save_reel_preset_ui(folder, name):
+    saved = load_settings(folder) if folder else {}
+    if not saved:
+        return "Elige un reel con ajustes guardados.", gr.update()
+    return save_preset(name, saved)
+
+
 def reassemble_ui(path, *montage_values):
     folder = reel_folder(path)
-    yield progress_bar_html("Iniciando…", 0), "Starting...", gr.update()
+    yield progress_bar_html("Iniciando…", 0), "", gr.update()
     montage = montage_options(dict(zip(MONTAGE_KEYS, montage_values)))
     for outputs in start_job_ui("reassemble", f"{os.path.basename(folder or '')} (nuevo montaje)",
                                 lambda: reassemble_reel(folder, montage)):
-        snap_video = outputs[4]
-        yield outputs[0], outputs[3], snap_video if snap_video else gr.update()
+        yield reel_job_outputs(outputs)
 
 
 # ---------------------------------------------------------------------------
 # Layout
 # ---------------------------------------------------------------------------
+def modal(title):
+    """A window over the page: returns (outer column, card column). Shown with visible=True."""
+    outer = gr.Column(visible=False, elem_classes=["modal"])
+    with outer:
+        card = gr.Column(elem_classes=["modal-card"])
+        with card:
+            gr.Markdown(f"### {title}")
+    return outer, card
+
+
 def build_ui():
     """Builds the Control Center. Returns (blocks, components by name)."""
     FONTS[:] = font_families()
     KEY_COMPONENTS.clear()
     KEY_SHOWN.clear()
     prefs = load_prefs()
+    m = prefs["montage"]
     initial_model = prefs["llm_model"] or default_model_for(llm_key_for(prefs["llm_provider"]))
     initial_voices = voice_choices(prefs["voice_provider"])
-    initial_voice = prefs["voice"] if prefs["voice"] in [v for _, v in initial_voices] else (initial_voices[0][1] if initial_voices else "")
-    initial_clip_kind = CLIP_PROVIDERS[prefs["clip_provider"]]["type"]
+    initial_voice = prefs["voice"] if prefs["voice"] in [v for _, v in initial_voices] else \
+        (initial_voices[0][1] if initial_voices else "")
+    clip = CLIP_PROVIDERS[prefs["clip_provider"]]
+    labels = chip_labels(prefs["llm_provider"], initial_model, prefs["image_provider"], prefs["voice_provider"],
+                         initial_voice, prefs["clip_provider"], m["aspect"], prefs["duration"], prefs["style"])
 
     with gr.Blocks(title="YT-Channel-Studio") as control_center:
-        gr.Markdown("## 🎬 YT-Channel-Studio · Centro de Control")
         with gr.Tabs() as tabs:
-            # ------------------------------------------------------------- produce
-            with gr.Tab("🎬 Producir reel", id="produce"):
-                with gr.Row():
-                    with gr.Column(scale=5):
-                        with gr.Accordion("📂 Presets: ajustes guardados para reutilizar", open=False):
-                            with gr.Row():
-                                preset_dd = gr.Dropdown(list_presets(), label="Preset", scale=3)
-                                preset_load_btn = gr.Button("📥 Cargar", size="sm", scale=1)
-                            with gr.Row():
-                                preset_name = gr.Textbox(label="Nombre para guardar los ajustes actuales", scale=3)
-                                preset_save_btn = gr.Button("💾 Guardar preset", size="sm", scale=1)
-                            preset_msg = gr.Markdown()
-                        idea_in = gr.Textbox(label="💡 Idea del reel", lines=2,
-                                             placeholder="Ej: Por qué los pastores alemanes son tan fieles")
-                        with gr.Group():
-                            gr.Markdown("**📝 Guion**", elem_classes=["section-title"])
-                            with gr.Row():
-                                language_dd = gr.Dropdown([(v[0], k) for k, v in LANGUAGES.items()],
-                                                          value=prefs["language"], label="Idioma")
-                                duration_sl = gr.Slider(15, 90, value=prefs["duration"], step=5, label="Duración (s)")
-                                tone_dd = gr.Dropdown([(k.capitalize().replace("Dramatico", "Dramático")
-                                                        .replace("Polemico", "Polémico"), k) for k in TONES],
-                                                      value=prefs["tone"], label="Tono")
-                            instructions_in = gr.Textbox(label="Instrucciones extra (opcional)", lines=1,
-                                                         value=prefs["instructions"],
-                                                         placeholder="Ej: termina con una pregunta; menciona mi canal @...")
-                            scenes_sl = gr.Slider(3, 8, value=prefs["num_scenes"], step=1, label="Número de escenas")
-                        with gr.Group():
-                            gr.Markdown("**🧠 Texto** (guion y kit de publicación)", elem_classes=["section-title"])
-                            llm_type_rd = gr.Radio([(v, k) for k, v in KIND_LABELS.items()], value=prefs["llm_type"],
-                                                   label="Tipo")
-                            with gr.Row():
-                                llm_dd = gr.Dropdown(llm_names_by_kind(prefs["llm_type"]), value=prefs["llm_provider"],
-                                                     label="Proveedor")
-                                model_dd = gr.Dropdown([initial_model] if initial_model else [], value=initial_model,
-                                                       label="Modelo (editable)", allow_custom_value=True)
-                        with gr.Group():
-                            gr.Markdown("**🎞️ Clips**", elem_classes=["section-title"])
-                            clip_type_rd = gr.Radio([(v, k) for k, v in CLIP_TYPES.items()], value=prefs["clip_type"],
-                                                    label="Tipo")
-                            clip_dd = gr.Dropdown(clip_provider_choices(prefs["clip_type"]), value=prefs["clip_provider"],
-                                                  label="Proveedor")
-                            paid_cb = gr.Checkbox(value=False, label="💳 Confirmo el cobro de este proveedor por cada clip",
-                                                  visible=initial_clip_kind == "external_ai")
-                            own_files_in = gr.File(label="Tus clips o fotos (se usan en este orden)", file_count="multiple",
-                                                   file_types=["video", "image"],
-                                                   visible=prefs["clip_provider"] == "upload")
-                            footage_md = gr.Markdown(visible=prefs["clip_provider"] == "footage",
-                                                     elem_classes=["section-title"])
-                            keyframe_rd = gr.Radio([("Sin imagen (texto a video)", "none"), ("FLUX (local)", "flux"),
-                                                    ("API compatible con OpenAI (externa)", "image_api")],
-                                                   value=prefs["keyframe_provider"],
-                                                   label="🖼️ Imagen base de cada clip (primer fotograma)",
-                                                   visible=initial_clip_kind == "local_ai")
-                        with gr.Group():
-                            gr.Markdown("**🎙️ Voz**", elem_classes=["section-title"])
-                            voice_type_rd = gr.Radio([(v, k) for k, v in VOICE_TYPES.items()], value=prefs["voice_type"],
-                                                     label="Tipo")
-                            with gr.Row():
-                                voice_provider_dd = gr.Dropdown(voice_provider_choices(prefs["voice_type"]),
-                                                                value=prefs["voice_provider"], label="Proveedor")
-                                voice_dd = gr.Dropdown(initial_voices, value=initial_voice, label="Voz (editable)",
-                                                       allow_custom_value=True)
-                            clone_in = gr.Audio(label="🧬 Muestra de 5-10 s para clonar", type="filepath",
-                                                visible=prefs["voice_provider"] == "f5")
-                        with gr.Group():
-                            gr.Markdown("**🖼️ Portada**", elem_classes=["section-title"])
-                            cover_rd = gr.Radio([("Sin portada", "none"), ("FLUX (local)", "flux"),
-                                                 ("API compatible con OpenAI (externa)", "image_api")],
-                                                value=prefs["cover_provider"], label="Proveedor")
-                        with gr.Group():
-                            gr.Markdown("**🎵 Música de fondo**", elem_classes=["section-title"])
-                            music_rd = gr.Radio([(v["label"], k) for k, v in MUSIC_SOURCES.items()],
-                                                value=prefs["music_source"], label="Origen")
-                        with gr.Accordion("🛠️ Montaje y subtítulos", open=False):
-                            montage_inputs = build_montage_controls(prefs["montage"])
-                        kit_cb = gr.Checkbox(value=prefs["make_kit"],
-                                             label="📣 Generar kit de publicación (títulos, captions, hashtags y hooks)")
-                        with gr.Accordion("⚙️ Ajustes de video IA local", open=False,
-                                          visible=initial_clip_kind == "local_ai") as ai_box:
-                            gr.Markdown("Ancho y alto se ajustan a múltiplos de 32 y al formato elegido. "
-                                        "Frames: Wan usa 4n+1, LTX 8n+1 (se corrigen solos).")
-                            with gr.Row():
-                                ai_w = gr.Number(value=prefs["ai_width"], label="Ancho", precision=0)
-                                ai_h = gr.Number(value=prefs["ai_height"], label="Alto", precision=0)
-                                ai_f = gr.Number(value=prefs["ai_frames"], label="Frames", precision=0)
-                                ai_s = gr.Number(value=prefs["ai_steps"], label="Pasos", precision=0)
-                        status_box = gr.HTML()
-                        with gr.Row():
-                            recheck_btn = gr.Button("🔄 Revisar de nuevo", size="sm")
-                            produce_btn = gr.Button("🚀 PRODUCIR REEL", variant="primary")
-                            stop_btn = gr.Button("⏹ Detener", variant="stop")
-                        with gr.Row():
-                            resume_btn = gr.Button("🔁 Reanudar el último reel desde donde falló", size="sm")
-                            attach_btn = gr.Button("📡 Ver el progreso en curso", size="sm")
-                    with gr.Column(scale=5):
-                        progress_box = gr.HTML(progress_bar_html())
-                        with gr.Accordion("🔧 Log técnico (ComfyUI, APIs, ffmpeg, errores)", open=False):
-                            tech_out = gr.Textbox(show_label=False, lines=14, max_lines=14, autoscroll=True,
-                                                  interactive=False, elem_classes=["tech-log"], **copy_kwargs())
-                        script_out = gr.Textbox(label="📝 Guion", lines=5, interactive=False, **copy_kwargs())
+            # ============================================================= produce
+            with gr.Tab("🎬 Producir", id="produce"):
+                with gr.Column(elem_classes=["main"]):
+                    with gr.Column(elem_classes=["composer"]):
+                        idea_in = gr.Textbox(show_label=False, container=False, lines=2, max_lines=6,
+                                             placeholder="Describe la idea de tu reel… (ej: por qué ayudan los lobos)")
+                        with gr.Row(elem_classes=["chips"]):
+                            llm_chip, image_chip, voice_chip, video_chip, format_chip, duration_chip, style_chip = [
+                                gr.Button(label, size="sm", elem_classes=["chip"]) for label in labels]
+                            settings_chip = gr.Button("⚙️ Ajustes", size="sm", elem_classes=["chip"])
+                            produce_btn = gr.Button("➤", variant="primary", size="sm", elem_classes=["send"])
+                    status_box = gr.HTML()
+                    progress_box = gr.HTML(progress_bar_html())
+                    step_md = gr.HTML()
+                    with gr.Row(elem_classes=["actions"]):
+                        stop_btn = gr.Button("⏹ Detener", size="sm")
+                        resume_btn = gr.Button("🔁 Reanudar donde falló", size="sm")
+                        attach_btn = gr.Button("📡 Ver progreso en curso", size="sm")
+                        show_tech_cb = gr.Checkbox(value=prefs["show_tech"], label="🔧 Mostrar log técnico",
+                                                   container=False)
+                    tech_out = gr.Textbox(show_label=False, lines=14, max_lines=14, autoscroll=True, interactive=False,
+                                          elem_classes=["tech-log"], visible=prefs["show_tech"], **copy_kwargs())
+                    video_out = gr.Video(label="📱 Reel final")
+                    variants_out = gr.File(label="🎞️ Todas las variantes", file_count="multiple", interactive=False)
+                    with gr.Accordion("📝 Guion", open=False):
+                        script_out = gr.Textbox(show_label=False, lines=5, interactive=False, **copy_kwargs())
+                    with gr.Column(visible=prefs["make_kit"]) as kit_section:
                         with gr.Accordion("📣 Kit de publicación (aparece apenas el guion está listo)", open=True):
                             kit_panel = build_kit_panel()
-                        gallery_out = gr.Gallery(label="🖼️ Imágenes y clips (se llenan a medida que salen)",
-                                                 columns=4, height=260, object_fit="cover")
-                        log_out = gr.Textbox(label="📋 Registro paso a paso", lines=14, max_lines=14,
-                                             autoscroll=True, interactive=False)
-                        video_out = gr.Video(label="📱 Reel final")
-                        variants_out = gr.File(label="🎞️ Todas las variantes", file_count="multiple", interactive=False)
-                        reel_state = gr.State(None)
-                        with gr.Accordion("📤 Publicar (Upload-Post)", open=False):
-                            publish_btn, publish_inputs, publish_out = build_publish_panel()
+                    gallery_out = gr.Gallery(label="🖼️ Imágenes y clips", columns=4, height=240, object_fit="cover")
+                    with gr.Accordion("📤 Publicar (Upload-Post)", open=False):
+                        publish_btn, publish_inputs, publish_out = build_publish_panel()
+                    reel_state = gr.State(None)
 
-            # ------------------------------------------------------------- keys
+                # ---------------------------------------------------- picker windows
+                llm_modal, card = modal("🧠 Texto: guion y kit de publicación")
+                with card:
+                    llm_type_rd = gr.Radio([(v, k) for k, v in KIND_LABELS.items()], value=prefs["llm_type"],
+                                           label="Tipo")
+                    with gr.Row():
+                        llm_dd = gr.Dropdown(llm_names_by_kind(prefs["llm_type"]), value=prefs["llm_provider"],
+                                             label="Proveedor")
+                        model_dd = gr.Dropdown([initial_model] if initial_model else [], value=initial_model,
+                                               label="Modelo (editable)", allow_custom_value=True)
+                    with gr.Row():
+                        models_btn = gr.Button("🔄 Ver los modelos disponibles", size="sm")
+                        models_note = gr.Markdown()
+                    llm_done = gr.Button("✔ Listo", variant="primary")
+
+                image_modal, card = modal("🖼️ Imagen")
+                with card:
+                    gr.Markdown("El mismo motor hace la portada, la imagen base de los clips que la aceptan y las "
+                                "fotos IA.")
+                    image_rd = gr.Radio([(v["label"], k) for k, v in IMAGE_PROVIDERS.items()],
+                                        value=prefs["image_provider"], label="Motor de imagen")
+                    image_done = gr.Button("✔ Listo", variant="primary")
+
+                voice_modal, card = modal("🎙️ Voz")
+                with card:
+                    voice_type_rd = gr.Radio([(v, k) for k, v in VOICE_TYPES.items()], value=prefs["voice_type"],
+                                             label="Tipo")
+                    with gr.Row():
+                        voice_provider_dd = gr.Dropdown(voice_provider_choices(prefs["voice_type"]),
+                                                        value=prefs["voice_provider"], label="Proveedor")
+                        voice_dd = gr.Dropdown(initial_voices, value=initial_voice, label="Voz (editable)",
+                                               allow_custom_value=True)
+                    clone_in = gr.Audio(label="🧬 Muestra de 5-10 s para clonar", type="filepath",
+                                        visible=prefs["voice_provider"] == "f5")
+                    voice_done = gr.Button("✔ Listo", variant="primary")
+
+                video_modal, card = modal("🎞️ Video: de dónde salen los clips")
+                with card:
+                    clip_type_rd = gr.Radio([(v, k) for k, v in CLIP_TYPES.items()], value=prefs["clip_type"],
+                                            label="Tipo")
+                    clip_dd = gr.Dropdown(clip_provider_choices(prefs["clip_type"]), value=prefs["clip_provider"],
+                                          label="Proveedor")
+                    paid_cb = gr.Checkbox(value=False, label="💳 Confirmo el cobro de este proveedor por cada clip",
+                                          visible=clip["type"] == "external_ai")
+                    own_files_in = gr.File(label="Tus clips o fotos (se usan en este orden)", file_count="multiple",
+                                           file_types=["video", "image"], visible=prefs["clip_provider"] == "upload")
+                    footage_md = gr.Markdown(visible=prefs["clip_provider"] == "footage")
+                    video_done = gr.Button("✔ Listo", variant="primary")
+
+                format_modal, card = modal("📐 Formato")
+                with card:
+                    aspect_rd = gr.Radio([("9:16 vertical (Reels, Shorts, TikTok)", "9:16"),
+                                          ("16:9 horizontal (YouTube)", "16:9"), ("1:1 cuadrado", "1:1")],
+                                         value=m["aspect"], label="Formato del video")
+                    format_done = gr.Button("✔ Listo", variant="primary")
+
+                duration_modal, card = modal("⏱️ Duración")
+                with card:
+                    duration_sl = gr.Slider(15, 90, value=prefs["duration"], step=5, label="Segundos de narración")
+                    duration_done = gr.Button("✔ Listo", variant="primary")
+
+                style_modal, card = modal("🎭 Estilo")
+                with card:
+                    style_rd = gr.Radio([(v, k) for k, v in STYLES.items()], value=prefs["style"],
+                                        label="Cómo se ve y se cuenta el reel")
+                    style_done = gr.Button("✔ Listo", variant="primary")
+
+                settings_modal, card = modal("⚙️ Ajustes")
+                with card:
+                    with gr.Accordion("📂 Presets: ajustes guardados para reutilizar", open=False):
+                        with gr.Row():
+                            preset_dd = gr.Dropdown(list_presets(), label="Preset", scale=3)
+                            preset_load_btn = gr.Button("📥 Cargar", size="sm", scale=1)
+                        with gr.Row():
+                            preset_name = gr.Textbox(label="Guardar los ajustes actuales como", scale=3)
+                            preset_save_btn = gr.Button("💾 Guardar preset", size="sm", scale=1)
+                        preset_msg = gr.Markdown()
+                    with gr.Group():
+                        gr.Markdown("**📝 Guion**", elem_classes=["section-title"])
+                        with gr.Row():
+                            language_dd = gr.Dropdown([(v[0], k) for k, v in LANGUAGES.items()],
+                                                      value=prefs["language"], label="Idioma")
+                            tone_dd = gr.Dropdown(TONE_CHOICES, value=prefs["tone"], label="Tono")
+                            scenes_dd = gr.Dropdown(SCENE_CHOICES, value=prefs["num_scenes"], label="Escenas")
+                        instructions_in = gr.Textbox(label="Instrucciones extra (opcional)", lines=1,
+                                                     value=prefs["instructions"],
+                                                     placeholder="Ej: termina con una pregunta; menciona mi canal @...")
+                    with gr.Group():
+                        gr.Markdown("**🖼️ Imágenes y kit**", elem_classes=["section-title"])
+                        cover_cb = gr.Checkbox(value=prefs["make_cover"], label="Generar la portada")
+                        keyframes_cb = gr.Checkbox(value=prefs["use_keyframes"],
+                                                   label="Usar una imagen como primer fotograma de cada clip IA",
+                                                   visible=bool(clip.get("accepts_image")))
+                        kit_cb = gr.Checkbox(value=prefs["make_kit"],
+                                             label="Generar el kit de publicación (títulos, captions, hashtags y hooks)")
+                    with gr.Group(visible=clip["type"] == "local_ai") as ai_box:
+                        gr.Markdown("**🖥️ Video IA local** · ancho y alto se ajustan a múltiplos de 32 y al formato; "
+                                    "frames: Wan 4n+1, LTX 8n+1 (se corrigen solos)", elem_classes=["section-title"])
+                        with gr.Row():
+                            ai_w = gr.Number(value=prefs["ai_width"], label="Ancho", precision=0)
+                            ai_h = gr.Number(value=prefs["ai_height"], label="Alto", precision=0)
+                            ai_f = gr.Number(value=prefs["ai_frames"], label="Frames", precision=0)
+                            ai_s = gr.Number(value=prefs["ai_steps"], label="Pasos", precision=0)
+                    with gr.Group():
+                        gr.Markdown("**🎵 Música de fondo**", elem_classes=["section-title"])
+                        music_rd = gr.Radio([(v["label"], k) for k, v in MUSIC_SOURCES.items()],
+                                            value=prefs["music_source"], show_label=False)
+                    with gr.Accordion("🛠️ Montaje y subtítulos", open=False):
+                        montage_inputs = build_montage_controls(m, aspect=aspect_rd)
+                    settings_done = gr.Button("✔ Listo", variant="primary")
+
+            # ============================================================= keys
             with gr.Tab("🔑 Claves API", id="keys"):
                 gr.Markdown(f"Se guardan en `{KEYS_FILE}` (texto plano en tu Drive). "
                             "**Probar** usa lo que está escrito, aunque aún no lo hayas guardado.")
@@ -878,7 +995,7 @@ def build_ui():
                 save_btn = gr.Button("💾 Guardar todas las claves en Google Drive", variant="primary")
                 save_msg = gr.Textbox(label="Confirmación", lines=2, interactive=False)
 
-            # ------------------------------------------------------------- reels
+            # ============================================================= reels
             with gr.Tab("📁 Mis reels", id="reels"):
                 with gr.Row():
                     reels_dd = gr.Dropdown(list_reels(), label="Reel guardado en Drive (✅ listo · ❌ falló · ⏹ detenido)",
@@ -886,56 +1003,74 @@ def build_ui():
                     reels_refresh = gr.Button("🔄 Actualizar lista", scale=1)
                 with gr.Row():
                     resume_reel_btn = gr.Button("🔁 Reanudar con sus ajustes", variant="primary", size="sm")
-                    use_settings_btn = gr.Button("♻️ Usar estos ajustes en «Producir reel»", size="sm")
+                    use_settings_btn = gr.Button("♻️ Usar estos ajustes en «Producir»", size="sm")
                 reel_note = gr.Markdown()
                 reel_progress = gr.HTML(progress_bar_html())
+                reel_step = gr.HTML()
                 with gr.Row():
                     reel_video = gr.Video(label="Reel")
                     with gr.Column():
                         reel_cover = gr.Image(label="Portada", height=260)
                         reel_script = gr.Textbox(label="Guion", lines=8, interactive=False, **copy_kwargs())
-                reel_log = gr.Textbox(label="Registro", lines=8, max_lines=8, autoscroll=True, interactive=False)
                 with gr.Accordion("⚙️ Ajustes con los que se hizo", open=False):
                     reel_settings = gr.JSON(show_label=False)
                     with gr.Row():
                         reel_preset_name = gr.Textbox(label="Guardarlos como preset con el nombre", scale=3)
                         reel_preset_btn = gr.Button("💾 Guardar preset", size="sm", scale=1)
                     reel_preset_msg = gr.Markdown()
-                regen_btn = gr.Button("🔁 Regenerar kit con el LLM elegido en «Producir reel»", size="sm")
+                regen_btn = gr.Button("🔁 Regenerar kit con el LLM elegido en «Producir»", size="sm")
                 with gr.Accordion("🛠️ Volver a montar (otro formato, subtítulos, ritmo o volumen; sin generar nada)",
                                   open=False):
-                    reel_montage_inputs = build_montage_controls(prefs["montage"])
+                    reel_montage_inputs = build_montage_controls(m)
                     reassemble_btn = gr.Button("🎬 Volver a montar este reel", variant="primary")
                 with gr.Accordion("📤 Publicar (Upload-Post)", open=False):
                     reel_publish_btn, reel_publish_inputs, reel_publish_out = build_publish_panel()
                 reel_kit_panel = build_kit_panel()
 
         # ----------------------------------------------------------------- wiring
+        chips = [llm_chip, image_chip, voice_chip, video_chip, format_chip, duration_chip, style_chip]
+        chip_inputs = [llm_dd, model_dd, image_rd, voice_provider_dd, voice_dd, clip_dd, aspect_rd, duration_sl, style_rd]
+        for chip, window, done in ((llm_chip, llm_modal, llm_done), (image_chip, image_modal, image_done),
+                                   (voice_chip, voice_modal, voice_done), (video_chip, video_modal, video_done),
+                                   (format_chip, format_modal, format_done),
+                                   (duration_chip, duration_modal, duration_done),
+                                   (style_chip, style_modal, style_done),
+                                   (settings_chip, settings_modal, settings_done)):
+            chip.click(lambda: gr.update(visible=True), None, window)
+            done.click(lambda: gr.update(visible=False), None, window).then(refresh_chips, chip_inputs, chips)
+        control_center.load(refresh_chips, chip_inputs, chips)
+
         # The cascading pickers react to the USER only (.input), so loading saved settings into the form is
         # never undone by them; a type change chains to the provider handler explicitly.
-        clip_outputs = [paid_cb, ai_box, keyframe_rd, own_files_in, footage_md]
-        check_inputs = [llm_dd, clip_dd, voice_provider_dd, cover_rd, keyframe_rd, music_rd, paid_cb, own_files_in]
+        clip_outputs = [paid_cb, own_files_in, footage_md, keyframes_cb, ai_box]
         llm_type_rd.input(on_llm_type_change, llm_type_rd, llm_dd).then(on_llm_change, llm_dd, model_dd)
         llm_dd.input(on_llm_change, llm_dd, model_dd)
-        clip_type_rd.input(on_clip_type_change, clip_type_rd, clip_dd).then(on_clip_change, clip_dd, clip_outputs)
-        clip_dd.input(on_clip_change, clip_dd, clip_outputs)
+        models_btn.click(refresh_models, [llm_dd, model_dd], [model_dd, models_note])
+        clip_type_rd.input(on_clip_type_change, clip_type_rd, clip_dd).then(clip_visibility, clip_dd, clip_outputs)
+        clip_dd.input(clip_visibility, clip_dd, clip_outputs)
         voice_type_rd.input(on_voice_type_change, voice_type_rd, voice_provider_dd).then(
             on_voice_provider_change, voice_provider_dd, [voice_dd, clone_in])
         voice_provider_dd.input(on_voice_provider_change, voice_provider_dd, [voice_dd, clone_in])
+        kit_cb.change(lambda show: gr.update(visible=show), kit_cb, kit_section)
+        show_tech_cb.change(lambda show: (save_show_tech(show), gr.update(visible=show))[1], show_tech_cb, tech_out)
+
+        check_inputs = [llm_dd, clip_dd, voice_provider_dd, image_rd, music_rd, paid_cb, own_files_in, cover_cb,
+                        keyframes_cb]
         for comp in check_inputs:
             comp.change(validate, check_inputs, status_box)
-        recheck_btn.click(validate, check_inputs, status_box)
         control_center.load(validate, check_inputs, status_box)
-        control_center.load(on_clip_change, clip_dd, clip_outputs)
+        control_center.load(clip_visibility, clip_dd, clip_outputs)
 
-        produce_inputs = [idea_in, language_dd, duration_sl, tone_dd, instructions_in, scenes_sl, llm_dd, model_dd,
-                          clip_type_rd, clip_dd, paid_cb, own_files_in, keyframe_rd, voice_type_rd, voice_provider_dd,
-                          voice_dd, clone_in, cover_rd, music_rd, kit_cb, ai_w, ai_h, ai_f, ai_s] + montage_inputs
-        production_outputs = [progress_box, script_out, gallery_out, log_out, video_out, variants_out] + kit_panel + \
+        produce_inputs = [idea_in, language_dd, duration_sl, style_rd, tone_dd, instructions_in, scenes_dd, llm_dd,
+                          model_dd, image_rd, cover_cb, keyframes_cb, clip_type_rd, clip_dd, paid_cb, own_files_in,
+                          voice_type_rd, voice_provider_dd, voice_dd, clone_in, music_rd, kit_cb, ai_w, ai_h, ai_f,
+                          ai_s] + montage_inputs
+        production_outputs = [progress_box, step_md, script_out, gallery_out, video_out, variants_out] + kit_panel + \
             [tech_out, reel_state]
-        form_outputs = produce_inputs + [ai_box, footage_md]
+        form_outputs = produce_inputs + [footage_md, ai_box, kit_section]
         # Following a job is just watching it: several tabs may watch at once, and closing one stops nothing.
         produce_btn.click(produce_ui, produce_inputs, production_outputs, concurrency_limit=None)
+        idea_in.submit(produce_ui, produce_inputs, production_outputs, concurrency_limit=None)
         resume_btn.click(resume_ui, [reel_state] + produce_inputs, production_outputs, concurrency_limit=None)
         attach_btn.click(attach_ui, None, production_outputs, concurrency_limit=None)
         control_center.load(attach_ui, None, production_outputs, concurrency_limit=None)   # page reopened: reconnect
@@ -943,29 +1078,50 @@ def build_ui():
         publish_btn.click(publish_ui, [reel_state] + publish_inputs + kit_panel[:6], publish_out)
         preset_save_btn.click(save_preset_ui, [preset_name] + produce_inputs, [preset_msg, preset_dd])
         preset_load_btn.click(load_preset_ui, preset_dd, form_outputs + [preset_msg, preset_dd]).then(
-            validate, check_inputs, status_box)
+            validate, check_inputs, status_box).then(refresh_chips, chip_inputs, chips)
 
         save_btn.click(save_all_keys, [c for _, _, c in KEY_COMPONENTS], save_msg).then(
             validate, check_inputs, status_box).then(on_voice_provider_change, voice_provider_dd, [voice_dd, clone_in])
         compat_name.change(load_compat_ui, compat_name, [compat_key, compat_url, compat_chat])
         compat_test_btn.click(test_compat_ui, [compat_url, compat_key], compat_msg)
         compat_save_btn.click(save_compat_ui, [compat_name, compat_key, compat_url, compat_chat],
-                              [compat_msg, llm_type_rd, llm_dd]).then(on_llm_change, llm_dd, model_dd)
+                              [compat_msg, llm_type_rd, llm_dd]).then(on_llm_change, llm_dd, model_dd).then(
+            refresh_chips, chip_inputs, chips)
 
         reels_refresh.click(lambda: gr.update(choices=list_reels()), None, reels_dd)
         reels_dd.change(show_reel, reels_dd, [reel_video, reel_script, reel_cover, reel_note, reel_settings] + reel_kit_panel)
-        resume_reel_btn.click(resume_reel_ui, reels_dd, [reel_progress, reel_log, reel_video], concurrency_limit=None)
+        resume_reel_btn.click(resume_reel_ui, reels_dd, [reel_progress, reel_step, reel_video], concurrency_limit=None)
         use_settings_btn.click(use_reel_settings_ui, reels_dd, form_outputs + [reel_note, reel_state, tabs]).then(
-            validate, check_inputs, status_box)
+            validate, check_inputs, status_box).then(refresh_chips, chip_inputs, chips)
         reel_preset_btn.click(save_reel_preset_ui, [reels_dd, reel_preset_name], [reel_preset_msg, preset_dd])
         regen_btn.click(regenerate_kit, [reels_dd, llm_dd, model_dd], [reel_note] + reel_kit_panel)
-        reassemble_btn.click(reassemble_ui, [reels_dd] + reel_montage_inputs, [reel_progress, reel_log, reel_video],
+        reassemble_btn.click(reassemble_ui, [reels_dd] + reel_montage_inputs, [reel_progress, reel_step, reel_video],
                              concurrency_limit=None)
         reel_publish_btn.click(publish_ui, [reels_dd] + reel_publish_inputs + reel_kit_panel[:6], reel_publish_out)
     return control_center, dict(locals())
 
 
 UI_CSS = """
+.main {max-width: 980px; margin: 0 auto !important; width: 100%;}
+.composer {border: 1px solid var(--border-color-primary) !important; border-radius: 24px !important;
+           padding: 14px 16px 10px 16px !important; background: var(--block-background-fill) !important;}
+.composer textarea {font-size: 17px !important; border: none !important; box-shadow: none !important;
+                    background: transparent !important;}
+.chips {gap: 6px !important; flex-wrap: wrap !important; align-items: center !important;}
+.chips > * {flex: 0 0 auto !important; min-width: 0 !important; width: auto !important;}
+button.chip {border-radius: 999px !important; padding: 4px 12px !important; font-size: 13px !important;}
+button.send {border-radius: 999px !important; min-width: 42px !important; width: 42px !important;
+             height: 42px !important; margin-left: auto !important; font-size: 18px !important;}
+.actions {gap: 6px !important; flex-wrap: wrap !important; align-items: center !important;}
+.actions > * {flex: 0 0 auto !important; min-width: 0 !important; width: auto !important;}
+.step-line {font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; opacity: .85;
+            padding: 2px 4px 6px 4px;}
+.modal {position: fixed !important; inset: 0 !important; z-index: 1000 !important; margin: 0 !important;
+        max-width: none !important; background: rgba(0, 0, 0, .55) !important; overflow-y: auto !important;
+        padding: 6vh 16px !important;}
+.modal-card {max-width: 760px !important; width: 100% !important; margin: 0 auto !important; flex: 0 0 auto !important;
+             background: var(--background-fill-primary) !important; border: 1px solid var(--border-color-primary) !important;
+             border-radius: 18px !important; padding: 18px !important; box-shadow: 0 20px 60px rgba(0, 0, 0, .45) !important;}
 .tech-log textarea {font-family: ui-monospace, Menlo, Consolas, monospace !important; font-size: 12px !important;}
 .section-title {padding: 8px 12px 4px 12px !important;}
 .section-title > *, .section-title .prose {padding: 0 !important; margin: 0 !important;}

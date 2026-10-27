@@ -17,8 +17,8 @@ KIT = {"virality": {"overall": 80}, "on_screen_hooks": ["Hook A", "Hook B"],
        "seed_comments": ["s"], "teaser": "t"}
 BASE = dict(idea="Por qué tu perro entiende palabras", language="es", duration=20, tone="divertido", instructions="",
             num_scenes=3, llm_provider="OpenAI (ChatGPT)", llm_model="gpt-test", confirm_paid=True, own_files=[],
-            keyframe_provider="none", voice_provider="openai_tts", voice="onyx", clone_sample=None,
-            cover_provider="none", music_source="library", make_kit=True, ai_width=480, ai_height=832,
+            image_provider="image_api", make_cover=False, use_keyframes=False, style="auto", voice_provider="openai_tts",
+            voice="onyx", clone_sample=None, music_source="library", make_kit=True, ai_width=480, ai_height=832,
             ai_frames=49, ai_steps=20, montage={})
 
 
@@ -36,12 +36,12 @@ def services(http, keys, media, fonts, monkeypatch):
     monkeypatch.setattr(time, "sleep", lambda s: real_sleep(min(s, 0.001)))
     monkeypatch.setattr(P, "transcribe_words", fake_words)
     monkeypatch.setattr(P, "drive_responds", lambda timeout=10: True)
-    for s in ("openai", "pexels", "wavespeed", "elevenlabs", "image_api"):
+    for s in ("openai", "pexels", "wavespeed", "elevenlabs", "image_api", "gemini"):
         keys(s, api_key=f"key-{s}")
     if not os.path.exists(f"{L.MUSIC_DIR}/song.mp3"):
         os.system(f"ffmpeg -loglevel error -f lavfi -i sine=frequency=500:duration=3 {L.MUSIC_DIR}/song.mp3")
     data = {k: open(media[k], "rb").read() for k in ("portrait", "landscape", "voice", "image")}
-    seen = {"orientation": [], "portrait": data["portrait"]}
+    seen = {"orientation": [], "portrait": data["portrait"], "image": data["image"]}
 
     def chat(call):
         payload = PLAN if "director" in call["json"]["messages"][0]["content"] else KIT
@@ -86,7 +86,7 @@ def test_stock_reel_end_to_end(services, http):
     for name in ("words.json", "plan.json", "script.txt", "publish_kit.json", "publish_kit.md", "subtitles.srt"):
         assert os.path.exists(f"{reel}/{name}"), name
     prompt = http.calls[0]["json"]["messages"][0]["content"]
-    assert "~20 seconds" in prompt and "fun and witty" in prompt
+    assert "~20 seconds" in prompt and "fun and witty" in prompt and "exactly 3 scenes" in prompt
 
 
 def test_landscape_variants_and_failed_ai_music(services):
@@ -108,7 +108,7 @@ def test_paid_ai_clips_one_per_scene(services, http):
 
 
 def test_ai_photos_with_cover(services):
-    _, last = produce(clip_provider="api_photos", idea="Fotos IA", cover_provider="image_api")
+    _, last = produce(clip_provider="ai_photos", idea="Fotos IA", make_cover=True)
     assert last["done"] and os.path.exists(f"{last['reel_dir']}/cover.png")
     assert len(glob.glob(f"{last['reel_dir']}/images/*.png")) == 3
 
@@ -173,3 +173,23 @@ def test_stopping_marks_the_reel_as_stopped(services):
             break
     generator.close()
     assert P.read_run_state(snapshot["reel_dir"])["status"] == "stopped"
+
+
+def test_gemini_omni_clips_start_from_nano_banana_frames(services, http):
+    calls = []
+
+    def interactions(call):
+        body = call["json"]
+        calls.append(body)
+        kind = body["response_format"]["type"]
+        data = services["portrait"] if kind == "video" else services["image"]
+        item = {"type": kind, "data": base64.b64encode(data).decode()}
+        return FakeResponse(json={"status": "completed", "steps": [{"type": "model_output", "content": [item]}]})
+    http.add("POST", r"v1beta/interactions$", interactions)
+    _, last = produce(clip_provider="gemini_omni", image_provider="nano_banana", make_cover=True, use_keyframes=True,
+                      idea="Lobos con Omni", music_source="none")
+    assert last["done"], last["log"][-600:]
+    images = [c for c in calls if c["response_format"]["type"] == "image"]
+    videos = [c for c in calls if c["response_format"]["type"] == "video"]
+    assert len(images) == 4 and len(videos) == 3                       # cover + one frame per scene; 3 clips
+    assert all(isinstance(v["input"], list) and v["input"][0]["type"] == "image" for v in videos)

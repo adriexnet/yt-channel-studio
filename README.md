@@ -15,7 +15,18 @@ Cada parte elige su proveedor por separado, local (gratis, en tu GPU de Colab) o
 4. Ejecuta la **Celda 7** y abre el link del **Centro de Control** que aparece al final.
 5. En la pestaña **🔑 Claves API** guarda al menos un modelo de lenguaje (OpenAI, Gemini, Groq…) y la clave
    gratuita de [Pexels](https://www.pexels.com/api/). Pulsa **Probar conexión** para verificarlas.
-6. Vuelve a **🎬 Producir reel**, escribe una idea y pulsa **🚀 PRODUCIR REEL**.
+6. Vuelve a **🎬 Producir**, escribe tu idea y pulsa **➤**.
+
+## Cómo se usa
+
+Escribes la idea y, debajo, cada botón muestra lo elegido y abre su selector: **🧠 texto** (LLM y modelo,
+con la lista de modelos que ofrece tu proveedor), **🖼️ imagen**, **🎙️ voz**, **🎞️ video** (de dónde salen
+los clips), **📐 formato**, **⏱️ duración** y **🎭 estilo** (automático, animado, objetos que hablan, top o
+datos curiosos, historia, POV, tutorial…). Todo lo demás está en **⚙️ Ajustes**, que solo muestra lo que
+aplica a lo que elegiste (por ejemplo, frames y pasos solo con video IA local): idioma, tono y número de
+escenas (automáticos por defecto), portada y kit de publicación (activados por defecto), música, montaje y
+subtítulos, y tus presets. Bajo la barra de progreso ves el paso actual; **🔧 Mostrar log técnico** abre
+el detalle completo para depurar.
 
 El reel, su guion, la voz, los clips y el kit de publicación quedan en tu Drive, en `YT-Channel-Studio/reels/`.
 
@@ -41,10 +52,10 @@ así sus versiones de PyTorch nunca chocan. Los modelos se guardan en Drive y so
 
 | Contenido | Local | Externo |
 |---|---|---|
-| Guion y kit | Ollama | OpenAI, Anthropic, Gemini y cualquier API compatible con OpenAI (Groq, OpenRouter, DeepSeek…) |
-| Clips | Wan 2.2, LTX-Video, fotos FLUX animadas, tus propios clips | Pexels, Pixabay, Coverr (gratis); WaveSpeed, Seedance, OFox, MuAPI, Metaso, Infistar (de pago, con confirmación) |
-| Voz | Edge-TTS, F5-TTS (clonación) | ElevenLabs, OpenAI, Azure, Gemini, SiliconFlow, MiMo, MiniMax, Fish Audio, VoxCPM |
-| Imágenes | FLUX (Forge) | Cualquier API de imágenes compatible con OpenAI |
+| Guion y kit | Ollama | OpenAI, Anthropic, Google Gemini y cualquier API compatible con OpenAI (Groq, OpenRouter, DeepSeek…) |
+| Clips | Wan 2.2, LTX-Video, fotos animadas, tus propios clips | Pexels, Pixabay, Coverr (gratis); Google Gemini Omni (sucesor de Veo en la API de Gemini, con audio), WaveSpeed, Seedance, OFox, MuAPI, Metaso, Infistar (de pago, con confirmación) |
+| Voz | Edge-TTS, F5-TTS (clonación) | ElevenLabs, OpenAI, Azure, Gemini TTS, SiliconFlow, MiMo, MiniMax, Fish Audio, VoxCPM |
+| Imágenes (portada, primer fotograma, fotos IA) | FLUX (Forge) | Nano Banana (Gemini) y cualquier API de imágenes compatible con OpenAI |
 | Música | Tus canciones en `Drive/music` | ElevenLabs Music |
 | Publicación | — | Upload-Post (TikTok, Instagram, YouTube, Facebook) |
 
@@ -59,7 +70,7 @@ nada de nuevo.
 
 - **Se cerró la pestaña o se cayó el link:** la producción sigue en segundo plano. Abre el link de nuevo (o
   pulsa **📡 Ver el progreso en curso**) y vuelves a verla donde va.
-- **Falló un paso** (una clave, un servicio caído, un error de red): pulsa **🔁 Reanudar**. Cada paso deja su
+- **Falló un paso** (una clave, un servicio caído, un error de red): pulsa **🔁 Reanudar donde falló**. Cada paso deja su
   archivo en Drive, así que se reutiliza todo lo que ya salió bien (guion, kit, imágenes, voz, subtítulos,
   clips ya pagados, música) y se sigue desde el paso que falló. Puedes cambiar el proveedor de ese paso antes
   de reanudar. En **📁 Mis reels** cada reel muestra ✅ listo, ❌ falló o ⏹ detenido, con el paso en el que quedó.
@@ -91,7 +102,7 @@ YT-Channel-Studio/
 
 Vuelve a ejecutar la **Celda 1**: trae la última versión sin reiniciar Colab. Para quedarte en una versión
 estable, cambia `VERSION = "main"` por una etiqueta de [Releases](https://github.com/adriexnet/yt-channel-studio/releases),
-por ejemplo `VERSION = "v2.1.0"`. Si una actualización cambia las dependencias de una herramienta, vuelve a
+por ejemplo `VERSION = "v2.2.0"`. Si una actualización cambia las dependencias de una herramienta, vuelve a
 ejecutar su celda.
 
 ## Desarrollo

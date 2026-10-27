@@ -74,7 +74,7 @@ def test_request_shapes(voice_keys, voice_api):
     assert c["headers"]["Ocp-Apim-Subscription-Key"] == "az-key" and "mp3" in c["headers"]["X-Microsoft-OutputFormat"]
     c = http.last("generateContent")
     config = c["json"]["generationConfig"]
-    assert config["responseModalities"] == ["AUDIO"] and "gemini-2.5-flash-preview-tts" in c["url"]
+    assert config["responseModalities"] == ["AUDIO"] and "gemini-3.8-flash-tts" in c["url"]
     assert config["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"] == "Charon"
     c = http.last("siliconflow")
     assert c["json"]["model"] == "FunAudioLLM/CosyVoice2-0.5B" and c["json"]["voice"].endswith(":alex")

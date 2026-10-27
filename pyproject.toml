@@ -1,6 +1,6 @@
 [project]
 name = "yt-channel-studio"
-version = "2.1.0"
+version = "2.2.0"
 description = "Produce, assemble and publish short vertical videos (Reels, Shorts, TikTok) from Google Colab"
 readme = "README.md"
 requires-python = ">=3.10"
