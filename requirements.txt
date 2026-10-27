@@ -1,0 +1,9 @@
+# Notebook-level packages (installed by Cell 2). Forge, ComfyUI and F5-TTS live in their own uv venvs.
+uv
+edge-tts
+faster-whisper
+gradio>=6,<7
+requests
+toml
+tqdm
+soundfile

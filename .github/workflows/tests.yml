@@ -1,0 +1,32 @@
+name: Pruebas
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m pytest tests/unit -q
+
+  integration-and-ui:
+    needs: unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fontconfig
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: python -m pytest tests/integration tests/ui -q
+      - name: The launcher notebook is up to date
+        run: |
+          python scripts/build_notebook.py
+          git diff --exit-code notebook/
