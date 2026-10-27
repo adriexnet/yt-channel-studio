@@ -1,9 +1,11 @@
 """Cell 7: the Control Center. Pick every provider, see in red what is missing, test and save the API keys,
-follow each reel live, re-assemble saved reels and publish them."""
+follow each reel live (it keeps running if the page disconnects), resume a failed reel from the failed step,
+reuse the settings of any reel or preset, re-assemble saved reels and publish them."""
 import html
 import gradio as gr
 from .lib import *
 from .pipeline import *
+from . import jobs
 
 # ---------------------------------------------------------------------------
 # Remembered choices (Drive), so the form opens the way you left it
@@ -21,15 +23,25 @@ DEFAULT_PREFS = {
 }
 
 
-def load_prefs():
-    prefs = json.loads(json.dumps(DEFAULT_PREFS))
+def read_json(path):
     try:
-        with open(PREFS_FILE, encoding="utf-8") as f:
-            saved = json.load(f)
-        prefs.update({k: v for k, v in saved.items() if k in DEFAULT_PREFS and k != "montage"})
-        prefs["montage"].update(saved.get("montage") or {})
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
     except Exception:
-        pass
+        return {}
+
+
+def load_prefs():
+    return normalize_settings(read_json(PREFS_FILE))
+
+
+def normalize_settings(saved):
+    """Defaults + saved values (form prefs, a preset or a reel's settings.json), never a choice that no
+    longer exists. Also used to fill the form when settings are loaded."""
+    prefs = json.loads(json.dumps(DEFAULT_PREFS))
+    prefs.update({k: v for k, v in (saved or {}).items() if k in DEFAULT_PREFS and k != "montage" and v is not None})
+    prefs["montage"].update((saved or {}).get("montage") or {})
+    prefs["idea"] = (saved or {}).get("idea", "")
     prefs["montage"] = montage_options(prefs["montage"])
     if prefs["montage"]["font"] not in FONTS:
         prefs["montage"]["font"] = "Anton" if "Anton" in FONTS else FONTS[0]
@@ -366,26 +378,169 @@ def gallery_items(media):
     return [(path, caption) for path, caption in media if os.path.exists(path)]
 
 
-def produce_ui(*values):
-    # Instant feedback: if even this does not show up, the problem is the connection to the UI, not the pipeline.
-    yield (progress_bar_html("Iniciando…", 0), "", [], f"Starting... (live copy of this log: {ReelRun.LOG_FILE})",
-           None, None) + tuple(gr.update() for _ in range(7)) + ("", None)
+def form_settings(values):
+    """The production form (PRODUCE_KEYS + montage controls, in that order) as a settings dict."""
     settings = dict(zip(PRODUCE_KEYS, values[:len(PRODUCE_KEYS)]))
     settings["montage"] = montage_options(dict(zip(MONTAGE_KEYS, values[len(PRODUCE_KEYS):])))
     for key in ("duration", "num_scenes", "ai_width", "ai_height", "ai_frames", "ai_steps"):
-        settings[key] = int(settings[key])
+        settings[key] = int(settings[key] or DEFAULT_PREFS[key])
+    return settings
+
+
+def snapshot_outputs(snap, shown):
+    """One snapshot -> the 15 production outputs. `shown` remembers the kit already on screen."""
+    outputs = (progress_bar_html(snap["stage"], snap["pct"], snap["failed"], snap["done"]),
+               snap["script"], gallery_items(snap["media"]), snap["log"], snap["video"], snap["videos"] or None)
+    if snap["kit"] is not shown.get("kit", "unset"):          # only refresh the kit fields when the kit changes
+        shown["kit"] = snap["kit"]
+        kit_part = tuple(kit_updates(snap["kit"]))
+    else:
+        kit_part = tuple(gr.update() for _ in range(7))
+    return outputs + kit_part + (snap["tech"], snap["reel_dir"] or gr.update())
+
+
+def no_change(message=None, failed=False):
+    """Production outputs that only show a message in the progress bar."""
+    bar = progress_bar_html(message, 0, failed=failed) if message else gr.update()
+    return (bar,) + tuple(gr.update() for _ in range(14))
+
+
+def follow_ui(job):
+    shown = {}
+    for snap in jobs.follow(job):
+        yield snapshot_outputs(snap, shown)
+
+
+def start_job_ui(kind, label, factory):
+    try:
+        job = jobs.start(kind, label, factory)
+    except RuntimeError as exc:
+        yield no_change(str(exc), failed=True)
+        return
+    yield from follow_ui(job)
+
+
+def produce_ui(*values):
+    # Instant feedback: if even this does not show up, the problem is the connection to the UI, not the pipeline.
+    yield (progress_bar_html("Iniciando…", 0), "", [], f"Starting... (live copy of this log: {ReelRun.LOG_FILE})",
+           None, None) + tuple(gr.update() for _ in range(7)) + ("", gr.update())
+    settings = form_settings(values)
     if drive_responds():                       # never block the run on a stale Drive just to remember choices
         save_prefs(settings)
-    shown_kit = "unset"
-    for snap in produce_reel(settings):
-        outputs = (progress_bar_html(snap["stage"], snap["pct"], snap["failed"], snap["done"]),
-                   snap["script"], gallery_items(snap["media"]), snap["log"], snap["video"], snap["videos"] or None)
-        if snap["kit"] is not shown_kit:          # only refresh the kit fields when the kit changes
-            shown_kit = snap["kit"]
-            kit_part = tuple(kit_updates(snap["kit"]))
-        else:
-            kit_part = tuple(gr.update() for _ in range(7))
-        yield outputs + kit_part + (snap["tech"], snap["reel_dir"])
+    yield from start_job_ui("produce", settings["idea"][:60], lambda: produce_reel(settings))
+
+
+def resume_ui(reel_dir, *values):
+    """Continues the selected reel with the form's settings: finished steps are reused, nothing is lost."""
+    if not reel_dir or not os.path.isdir(reel_dir):
+        yield no_change("No hay un reel para reanudar: elige uno en «📁 Mis reels» → «♻️ Usar estos ajustes».",
+                        failed=True)
+        return
+    settings = form_settings(values)
+    settings["idea"] = load_settings(reel_dir).get("idea") or settings["idea"] or os.path.basename(reel_dir)
+    yield from start_job_ui("produce", f"{os.path.basename(reel_dir)} (reanudado)",
+                            lambda: produce_reel(settings, resume_dir=reel_dir))
+
+
+def attach_ui():
+    """Shows the production running in the background (or the last one of this session)."""
+    job = jobs.current()
+    if job is None:
+        yield no_change()
+        return
+    yield from follow_ui(job)
+
+
+def stop_ui():
+    job = jobs.current()
+    if job is None or not job.running:
+        return progress_bar_html("No hay nada en curso", 0)
+    job.cancel()
+    return progress_bar_html("Deteniendo… (termina el paso que está en curso)", 0, failed=True)
+
+
+# ---------------------------------------------------------------------------
+# Reusable settings: presets (Drive/config/presets) and the settings.json of every reel
+# ---------------------------------------------------------------------------
+PRESETS_DIR = f"{CONFIG_DIR}/presets"
+
+
+def list_presets():
+    return sorted(f[:-5] for f in os.listdir(PRESETS_DIR) if f.endswith(".json")) if os.path.isdir(PRESETS_DIR) else []
+
+
+def save_preset(name, settings):
+    name = re.sub(r"\s+", " ", re.sub(r"[^\w .-]+", "", name or "", flags=re.UNICODE)).strip()
+    if not name:
+        return "Escribe un nombre para el preset.", gr.update()
+    os.makedirs(PRESETS_DIR, exist_ok=True)
+    data = {k: v for k, v in settings.items() if k not in SETTINGS_SKIPPED and not k.startswith("_")}
+    data.pop("confirm_paid", None)                 # a preset never pre-approves a charge
+    with open(f"{PRESETS_DIR}/{name}.json", "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    return f"✅ Preset «{name}» guardado en Drive.", gr.update(choices=list_presets(), value=name)
+
+
+def save_preset_ui(name, *values):
+    return save_preset(name, form_settings(values))
+
+
+def settings_updates(saved, keep_confirmation=False):
+    """Updates for every production input (PRODUCE_KEYS + montage, in order) plus the AI-settings box and the
+    footage note, so the whole form shows these settings. Programmatic updates do not fire the cascading
+    pickers (they listen to user input only), so nothing here is overwritten afterwards."""
+    p = normalize_settings(saved)
+    kind = CLIP_PROVIDERS[p["clip_provider"]]["type"]
+    model = p["llm_model"] or default_model_for(llm_key_for(p["llm_provider"]))
+    voices = voice_choices(p["voice_provider"])
+    if p["voice"] and p["voice"] not in [v for _, v in voices]:
+        voices = [(p["voice"], p["voice"])] + voices
+    values = {
+        "idea": gr.update(value=p["idea"]), "language": gr.update(value=p["language"]),
+        "duration": gr.update(value=p["duration"]), "tone": gr.update(value=p["tone"]),
+        "instructions": gr.update(value=p["instructions"]), "num_scenes": gr.update(value=p["num_scenes"]),
+        "llm_provider": gr.update(choices=llm_names_by_kind(p["llm_type"]), value=p["llm_provider"]),
+        "llm_model": gr.update(choices=[model] if model else [], value=model),
+        "clip_type": gr.update(value=kind),
+        "clip_provider": gr.update(choices=clip_provider_choices(kind), value=p["clip_provider"]),
+        "confirm_paid": gr.update(visible=kind == "external_ai",
+                                  value=bool(keep_confirmation and (saved or {}).get("confirm_paid"))),
+        "own_files": gr.update(visible=p["clip_provider"] == "upload", value=None),
+        "keyframe_provider": gr.update(visible=kind == "local_ai", value=p["keyframe_provider"]),
+        "voice_type": gr.update(value=p["voice_type"]),
+        "voice_provider": gr.update(choices=voice_provider_choices(p["voice_type"]), value=p["voice_provider"]),
+        "voice": gr.update(choices=voices, value=p["voice"] or (voices[0][1] if voices else "")),
+        "clone_sample": gr.update(visible=p["voice_provider"] == "f5", value=None),
+        "cover_provider": gr.update(value=p["cover_provider"]), "music_source": gr.update(value=p["music_source"]),
+        "make_kit": gr.update(value=p["make_kit"]),
+        "ai_width": gr.update(value=p["ai_width"]), "ai_height": gr.update(value=p["ai_height"]),
+        "ai_frames": gr.update(value=p["ai_frames"]), "ai_steps": gr.update(value=p["ai_steps"]),
+    }
+    updates = [values[k] for k in PRODUCE_KEYS] + [gr.update(value=p["montage"][k]) for k in MONTAGE_KEYS]
+    footage = f"📂 `{FOOTAGE_DIR}` · {len(footage_files())} archivo(s). Se usan en orden de nombre."
+    return updates + [gr.update(visible=kind == "local_ai"),
+                      gr.update(visible=p["clip_provider"] == "footage", value=footage)]
+
+
+def load_preset_ui(name):
+    if not name or name not in list_presets():
+        return [gr.update() for _ in range(len(PRODUCE_KEYS) + len(MONTAGE_KEYS) + 2)] + \
+               ["Elige un preset guardado.", gr.update()]
+    data = read_json(f"{PRESETS_DIR}/{name}.json")
+    return settings_updates(data) + [f"✅ Ajustes del preset «{name}» cargados.", gr.update()]
+
+
+def use_reel_settings_ui(folder):
+    """Loads a reel's settings into the production form and points «Reanudar» at that reel."""
+    if not folder or not os.path.isdir(folder):
+        return [gr.update() for _ in range(len(PRODUCE_KEYS) + len(MONTAGE_KEYS) + 2)] + \
+               ["Elige un reel primero.", gr.update(), gr.update()]
+    saved = load_settings(folder)
+    if not saved:
+        return [gr.update() for _ in range(len(PRODUCE_KEYS) + len(MONTAGE_KEYS) + 2)] + \
+               ["Este reel no tiene ajustes guardados.", gr.update(), gr.update()]
+    return settings_updates(saved) + [f"✅ Ajustes de «{os.path.basename(folder)}» cargados en «🎬 Producir reel».",
+                                      folder, gr.Tabs(selected="produce")]
 
 
 # ---------------------------------------------------------------------------
@@ -450,31 +605,78 @@ def save_compat_ui(name, api_key, base_url, chat_model):
 # Reels tab
 # ---------------------------------------------------------------------------
 def list_reels():
-    finals = sorted(glob.glob(f"{REELS_DIR}/*/*_FINAL.mp4"), key=os.path.getmtime, reverse=True)
-    return [(os.path.basename(os.path.dirname(p)), p) for p in finals]
+    """Every reel folder, newest first, with how its last run ended (finished, failed, stopped...)."""
+    folders = [d for d in glob.glob(f"{REELS_DIR}/*") if os.path.isdir(d)]
+    folders.sort(key=os.path.getmtime, reverse=True)
+    running = jobs.current()
+    out = []
+    for folder in folders:
+        state = read_run_state(folder)
+        status = state.get("status", "failed")
+        if status == "running" and not (running and running.running and running.snapshot
+                                         and running.snapshot.get("reel_dir") == folder):
+            status = "stopped"                             # the session that was producing it ended
+        label = RUN_STATES.get(status, status)
+        stage = f" · {state['stage']}" if status in ("failed", "stopped") and state.get("stage") else ""
+        out.append((f"{label} · {os.path.basename(folder)}{stage}", folder))
+    return out
 
 
-def show_reel(path):
-    if not path or not os.path.exists(path):
-        return (None, "", None, "") + tuple(kit_updates(None))
-    folder = os.path.dirname(path)
+def final_video(folder):
+    path = f"{folder}/{os.path.basename(folder)}_FINAL.mp4"
+    return path if os.path.exists(path) else None
+
+
+def show_reel(folder):
+    if not folder or not os.path.isdir(folder):
+        return (None, "", None, "", None) + tuple(kit_updates(None))
     script = ""
     if os.path.exists(f"{folder}/script.txt"):
         with open(f"{folder}/script.txt", encoding="utf-8") as f:
             script = f.read()
     cover = f"{folder}/cover.png" if os.path.exists(f"{folder}/cover.png") else None
     kit = load_publish_kit(folder)
+    state = read_run_state(folder)
+    notes = []
+    if state.get("status") in ("failed", "stopped", "running"):
+        notes.append(f"**{RUN_STATES.get(state['status'], state['status'])}** en «{state.get('stage', '?')}»"
+                     + (f": {state['error']}" if state.get("error") else "")
+                     + ". Pulsa **🔁 Reanudar** para seguir desde ahí sin repetir lo ya hecho.")
     variants = len(glob.glob(f"{folder}/*_FINAL*.mp4"))
-    note = (f"{variants} variante(s) en la carpeta del reel." if variants > 1 else "") + \
-           ("" if kit else " Este reel no tiene kit todavía: usa «Regenerar kit».")
-    return (path, script, cover, note.strip()) + tuple(kit_updates(kit))
+    if variants > 1:
+        notes.append(f"{variants} variantes en la carpeta del reel.")
+    if not kit:
+        notes.append("Este reel no tiene kit todavía: usa «Regenerar kit».")
+    return (final_video(folder), script, cover, "  \n".join(notes), load_settings(folder) or None) + \
+        tuple(kit_updates(kit))
+
+
+def resume_reel_ui(folder):
+    """Continues a reel with the settings it was made with."""
+    saved = load_settings(folder) if folder else {}
+    if not saved:
+        yield progress_bar_html("Este reel no tiene ajustes guardados: usa «♻️ Usar estos ajustes».", 0, failed=True), \
+            "", gr.update()
+        return
+    settings = normalize_settings(saved)
+    settings["confirm_paid"] = bool(saved.get("confirm_paid"))
+    for snap_outputs in start_job_ui("produce", f"{os.path.basename(folder)} (reanudado)",
+                                     lambda: produce_reel(settings, resume_dir=folder)):
+        yield snap_outputs[0], snap_outputs[3], snap_outputs[4]
+
+
+def save_reel_preset_ui(folder, name):
+    saved = load_settings(folder) if folder else {}
+    if not saved:
+        return "Elige un reel con ajustes guardados.", gr.update()
+    return save_preset(name, saved)
 
 
 def regenerate_kit(path, llm_name, llm_model):
     """New kit for a saved reel, written by the LLM currently selected in the production tab."""
-    if not path or not os.path.exists(path):
+    folder = reel_folder(path)
+    if not folder or not os.path.isdir(folder):
         return ("Elige un reel primero.",) + tuple(gr.update() for _ in range(7))
-    folder = os.path.dirname(path)
     try:
         with open(f"{folder}/plan.json", encoding="utf-8") as f:
             plan = json.load(f)
@@ -496,9 +698,11 @@ def regenerate_kit(path, llm_name, llm_model):
 def reassemble_ui(path, *montage_values):
     folder = reel_folder(path)
     yield progress_bar_html("Iniciando…", 0), "Starting...", gr.update()
-    for snap in reassemble_reel(folder, montage_options(dict(zip(MONTAGE_KEYS, montage_values)))):
-        yield (progress_bar_html(snap["stage"], snap["pct"], snap["failed"], snap["done"]), snap["log"],
-               snap["video"] if snap["done"] else gr.update())
+    montage = montage_options(dict(zip(MONTAGE_KEYS, montage_values)))
+    for outputs in start_job_ui("reassemble", f"{os.path.basename(folder or '')} (nuevo montaje)",
+                                lambda: reassemble_reel(folder, montage)):
+        snap_video = outputs[4]
+        yield outputs[0], outputs[3], snap_video if snap_video else gr.update()
 
 
 # ---------------------------------------------------------------------------
@@ -517,11 +721,19 @@ def build_ui():
 
     with gr.Blocks(title="YT-Channel-Studio") as control_center:
         gr.Markdown("## 🎬 YT-Channel-Studio · Centro de Control")
-        with gr.Tabs():
+        with gr.Tabs() as tabs:
             # ------------------------------------------------------------- produce
-            with gr.Tab("🎬 Producir reel"):
+            with gr.Tab("🎬 Producir reel", id="produce"):
                 with gr.Row():
                     with gr.Column(scale=5):
+                        with gr.Accordion("📂 Presets: ajustes guardados para reutilizar", open=False):
+                            with gr.Row():
+                                preset_dd = gr.Dropdown(list_presets(), label="Preset", scale=3)
+                                preset_load_btn = gr.Button("📥 Cargar", size="sm", scale=1)
+                            with gr.Row():
+                                preset_name = gr.Textbox(label="Nombre para guardar los ajustes actuales", scale=3)
+                                preset_save_btn = gr.Button("💾 Guardar preset", size="sm", scale=1)
+                            preset_msg = gr.Markdown()
                         idea_in = gr.Textbox(label="💡 Idea del reel", lines=2,
                                              placeholder="Ej: Por qué los pastores alemanes son tan fieles")
                         with gr.Group():
@@ -602,6 +814,9 @@ def build_ui():
                             recheck_btn = gr.Button("🔄 Revisar de nuevo", size="sm")
                             produce_btn = gr.Button("🚀 PRODUCIR REEL", variant="primary")
                             stop_btn = gr.Button("⏹ Detener", variant="stop")
+                        with gr.Row():
+                            resume_btn = gr.Button("🔁 Reanudar el último reel desde donde falló", size="sm")
+                            attach_btn = gr.Button("📡 Ver el progreso en curso", size="sm")
                     with gr.Column(scale=5):
                         progress_box = gr.HTML(progress_bar_html())
                         with gr.Accordion("🔧 Log técnico (ComfyUI, APIs, ffmpeg, errores)", open=False):
@@ -621,7 +836,7 @@ def build_ui():
                             publish_btn, publish_inputs, publish_out = build_publish_panel()
 
             # ------------------------------------------------------------- keys
-            with gr.Tab("🔑 Claves API"):
+            with gr.Tab("🔑 Claves API", id="keys"):
                 gr.Markdown(f"Se guardan en `{KEYS_FILE}` (texto plano en tu Drive). "
                             "**Probar** usa lo que está escrito, aunque aún no lo hayas guardado.")
                 saved_keys = ensure_api_keys_file()
@@ -664,63 +879,88 @@ def build_ui():
                 save_msg = gr.Textbox(label="Confirmación", lines=2, interactive=False)
 
             # ------------------------------------------------------------- reels
-            with gr.Tab("📁 Mis reels"):
+            with gr.Tab("📁 Mis reels", id="reels"):
                 with gr.Row():
-                    reels_dd = gr.Dropdown(list_reels(), label="Reel guardado en Drive", scale=4)
+                    reels_dd = gr.Dropdown(list_reels(), label="Reel guardado en Drive (✅ listo · ❌ falló · ⏹ detenido)",
+                                           scale=4)
                     reels_refresh = gr.Button("🔄 Actualizar lista", scale=1)
+                with gr.Row():
+                    resume_reel_btn = gr.Button("🔁 Reanudar con sus ajustes", variant="primary", size="sm")
+                    use_settings_btn = gr.Button("♻️ Usar estos ajustes en «Producir reel»", size="sm")
+                reel_note = gr.Markdown()
+                reel_progress = gr.HTML(progress_bar_html())
                 with gr.Row():
                     reel_video = gr.Video(label="Reel")
                     with gr.Column():
                         reel_cover = gr.Image(label="Portada", height=260)
                         reel_script = gr.Textbox(label="Guion", lines=8, interactive=False, **copy_kwargs())
-                with gr.Row():
-                    regen_btn = gr.Button("🔁 Regenerar kit con el LLM elegido en «Producir reel»", size="sm", scale=1)
-                    reel_note = gr.Markdown()
+                reel_log = gr.Textbox(label="Registro", lines=8, max_lines=8, autoscroll=True, interactive=False)
+                with gr.Accordion("⚙️ Ajustes con los que se hizo", open=False):
+                    reel_settings = gr.JSON(show_label=False)
+                    with gr.Row():
+                        reel_preset_name = gr.Textbox(label="Guardarlos como preset con el nombre", scale=3)
+                        reel_preset_btn = gr.Button("💾 Guardar preset", size="sm", scale=1)
+                    reel_preset_msg = gr.Markdown()
+                regen_btn = gr.Button("🔁 Regenerar kit con el LLM elegido en «Producir reel»", size="sm")
                 with gr.Accordion("🛠️ Volver a montar (otro formato, subtítulos, ritmo o volumen; sin generar nada)",
                                   open=False):
                     reel_montage_inputs = build_montage_controls(prefs["montage"])
                     reassemble_btn = gr.Button("🎬 Volver a montar este reel", variant="primary")
-                    reel_progress = gr.HTML(progress_bar_html())
-                    reel_log = gr.Textbox(label="Registro", lines=8, max_lines=8, autoscroll=True, interactive=False)
                 with gr.Accordion("📤 Publicar (Upload-Post)", open=False):
                     reel_publish_btn, reel_publish_inputs, reel_publish_out = build_publish_panel()
                 reel_kit_panel = build_kit_panel()
 
         # ----------------------------------------------------------------- wiring
+        # The cascading pickers react to the USER only (.input), so loading saved settings into the form is
+        # never undone by them; a type change chains to the provider handler explicitly.
+        clip_outputs = [paid_cb, ai_box, keyframe_rd, own_files_in, footage_md]
         check_inputs = [llm_dd, clip_dd, voice_provider_dd, cover_rd, keyframe_rd, music_rd, paid_cb, own_files_in]
-        llm_type_rd.input(on_llm_type_change, llm_type_rd, llm_dd)
-        llm_dd.change(on_llm_change, llm_dd, model_dd)
-        clip_type_rd.input(on_clip_type_change, clip_type_rd, clip_dd)
-        clip_dd.change(on_clip_change, clip_dd, [paid_cb, ai_box, keyframe_rd, own_files_in, footage_md])
-        voice_type_rd.input(on_voice_type_change, voice_type_rd, voice_provider_dd)
-        voice_provider_dd.change(on_voice_provider_change, voice_provider_dd, [voice_dd, clone_in])
+        llm_type_rd.input(on_llm_type_change, llm_type_rd, llm_dd).then(on_llm_change, llm_dd, model_dd)
+        llm_dd.input(on_llm_change, llm_dd, model_dd)
+        clip_type_rd.input(on_clip_type_change, clip_type_rd, clip_dd).then(on_clip_change, clip_dd, clip_outputs)
+        clip_dd.input(on_clip_change, clip_dd, clip_outputs)
+        voice_type_rd.input(on_voice_type_change, voice_type_rd, voice_provider_dd).then(
+            on_voice_provider_change, voice_provider_dd, [voice_dd, clone_in])
+        voice_provider_dd.input(on_voice_provider_change, voice_provider_dd, [voice_dd, clone_in])
         for comp in check_inputs:
             comp.change(validate, check_inputs, status_box)
         recheck_btn.click(validate, check_inputs, status_box)
         control_center.load(validate, check_inputs, status_box)
-        control_center.load(on_clip_change, clip_dd, [paid_cb, ai_box, keyframe_rd, own_files_in, footage_md])
+        control_center.load(on_clip_change, clip_dd, clip_outputs)
 
         produce_inputs = [idea_in, language_dd, duration_sl, tone_dd, instructions_in, scenes_sl, llm_dd, model_dd,
                           clip_type_rd, clip_dd, paid_cb, own_files_in, keyframe_rd, voice_type_rd, voice_provider_dd,
                           voice_dd, clone_in, cover_rd, music_rd, kit_cb, ai_w, ai_h, ai_f, ai_s] + montage_inputs
-        produce_event = produce_btn.click(
-            produce_ui, produce_inputs,
-            [progress_box, script_out, gallery_out, log_out, video_out, variants_out] + kit_panel + [tech_out, reel_state])
-        stop_btn.click(lambda: progress_bar_html("Detenido por ti", 0, failed=True), None, progress_box,
-                       cancels=[produce_event])
+        production_outputs = [progress_box, script_out, gallery_out, log_out, video_out, variants_out] + kit_panel + \
+            [tech_out, reel_state]
+        form_outputs = produce_inputs + [ai_box, footage_md]
+        # Following a job is just watching it: several tabs may watch at once, and closing one stops nothing.
+        produce_btn.click(produce_ui, produce_inputs, production_outputs, concurrency_limit=None)
+        resume_btn.click(resume_ui, [reel_state] + produce_inputs, production_outputs, concurrency_limit=None)
+        attach_btn.click(attach_ui, None, production_outputs, concurrency_limit=None)
+        control_center.load(attach_ui, None, production_outputs, concurrency_limit=None)   # page reopened: reconnect
+        stop_btn.click(stop_ui, None, progress_box)
         publish_btn.click(publish_ui, [reel_state] + publish_inputs + kit_panel[:6], publish_out)
+        preset_save_btn.click(save_preset_ui, [preset_name] + produce_inputs, [preset_msg, preset_dd])
+        preset_load_btn.click(load_preset_ui, preset_dd, form_outputs + [preset_msg, preset_dd]).then(
+            validate, check_inputs, status_box)
 
         save_btn.click(save_all_keys, [c for _, _, c in KEY_COMPONENTS], save_msg).then(
             validate, check_inputs, status_box).then(on_voice_provider_change, voice_provider_dd, [voice_dd, clone_in])
         compat_name.change(load_compat_ui, compat_name, [compat_key, compat_url, compat_chat])
         compat_test_btn.click(test_compat_ui, [compat_url, compat_key], compat_msg)
         compat_save_btn.click(save_compat_ui, [compat_name, compat_key, compat_url, compat_chat],
-                              [compat_msg, llm_type_rd, llm_dd])
+                              [compat_msg, llm_type_rd, llm_dd]).then(on_llm_change, llm_dd, model_dd)
 
         reels_refresh.click(lambda: gr.update(choices=list_reels()), None, reels_dd)
-        reels_dd.change(show_reel, reels_dd, [reel_video, reel_script, reel_cover, reel_note] + reel_kit_panel)
+        reels_dd.change(show_reel, reels_dd, [reel_video, reel_script, reel_cover, reel_note, reel_settings] + reel_kit_panel)
+        resume_reel_btn.click(resume_reel_ui, reels_dd, [reel_progress, reel_log, reel_video], concurrency_limit=None)
+        use_settings_btn.click(use_reel_settings_ui, reels_dd, form_outputs + [reel_note, reel_state, tabs]).then(
+            validate, check_inputs, status_box)
+        reel_preset_btn.click(save_reel_preset_ui, [reels_dd, reel_preset_name], [reel_preset_msg, preset_dd])
         regen_btn.click(regenerate_kit, [reels_dd, llm_dd, model_dd], [reel_note] + reel_kit_panel)
-        reassemble_btn.click(reassemble_ui, [reels_dd] + reel_montage_inputs, [reel_progress, reel_log, reel_video])
+        reassemble_btn.click(reassemble_ui, [reels_dd] + reel_montage_inputs, [reel_progress, reel_log, reel_video],
+                             concurrency_limit=None)
         reel_publish_btn.click(publish_ui, [reels_dd] + reel_publish_inputs + reel_kit_panel[:6], reel_publish_out)
     return control_center, dict(locals())
 

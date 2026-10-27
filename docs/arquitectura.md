@@ -12,6 +12,7 @@ studio/
 ├── pipeline.py        guion y kit (LLM), imágenes, clips, música, montaje (ffmpeg), publicación,
 │                      produce_reel() y reassemble_reel()
 ├── control_center.py  interfaz Gradio: build_ui() y start()
+├── jobs.py            trabajos en segundo plano (no se recarga con studio.reload())
 ├── setup.py           celdas 1 y 2
 ├── dashboard.py       celda 8
 └── tools/             celdas 3-6: ollama, forge, comfyui, audio
@@ -37,9 +38,18 @@ idea ─► guion (LLM) ─► kit de publicación (mismo LLM)
      ─► publicación (Upload-Post)
 ```
 
-`produce_reel()` es un generador: cada paso emite un snapshot (etapa, porcentaje, registro, medios, videos)
-que la interfaz muestra en vivo. Los trabajos largos corren en un hilo (`_wait_for`) para que la interfaz siga
-recibiendo actualizaciones.
+`produce_reel()` es un generador: cada paso emite un snapshot (etapa, porcentaje, registro, medios, videos).
+`jobs.start()` lo ejecuta en un hilo propio y guarda el último snapshot; la interfaz solo lo **observa**
+(`jobs.follow()`). Por eso cerrar la pestaña no detiene nada, varias pestañas pueden mirar a la vez y al
+reabrir la página se vuelve a conectar sola. **⏹ Detener** marca el trabajo y este para al terminar el paso en
+curso. Los pasos largos corren a su vez en un hilo (`_wait_for`) para que los snapshots sigan saliendo.
+
+## Reanudar
+
+Cada paso deja su archivo en la carpeta del reel y `run_state.json` guarda cómo terminó la última ejecución
+(`running`, `done`, `failed`, `stopped`) y en qué paso. `produce_reel(settings, resume_dir=carpeta)` salta
+todo paso cuyo archivo ya existe: guion, kit, portada, imágenes, voz, tiempos de palabras, cada clip (incluidos
+los de pago) y la música; el montaje se rehace siempre. Una producción nueva usa siempre una carpeta nueva.
 
 ## La carpeta de cada reel
 
@@ -49,7 +59,8 @@ carpeta cuando viven dentro de ella):
 | Archivo | Contenido |
 |---|---|
 | `plan.json`, `script.txt` | guion, escenas, gancho, prompts de imagen, movimiento y música |
-| `settings.json` | lo que elegiste en el formulario |
+| `settings.json` | todo lo que elegiste (reutilizable o guardable como preset) |
+| `run_state.json` | cómo terminó la última ejecución y en qué paso |
 | `voice.mp3`, `words.json` | la voz y el tiempo de cada palabra |
 | `clips/`, `images/`, `cover.png` | los medios generados o copiados |
 | `assets.json` | voz, clips, canción, idioma, ganchos y el último montaje usado |

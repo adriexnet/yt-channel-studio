@@ -43,7 +43,7 @@ lanzador de 8 celdas: la Celda 1 clona o actualiza el repositorio y las demás s
 | Pruebas | En el repositorio, con CI en cada cambio |
 | Dependencia externa | GitHub (con copia de respaldo en Drive) |
 
-**A favor:** historial y versiones (`VERSION = "v2.0.0"`), pruebas automáticas, celdas legibles con sus
+**A favor:** historial y versiones (`VERSION = "v2.1.0"`), pruebas automáticas, celdas legibles con sus
 opciones a la vista.
 **En contra:** depende de GitHub al iniciar; al ser público, el código es visible para cualquiera.
 

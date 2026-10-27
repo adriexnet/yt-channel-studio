@@ -55,12 +55,30 @@ frases con tu fuente y colores · gancho en pantalla · velocidad y volumen de l
 cuando habla la voz · hasta 3 variantes. En **📁 Mis reels → Volver a montar** cambias todo eso sin generar
 nada de nuevo.
 
+## Si algo se corta o falla
+
+- **Se cerró la pestaña o se cayó el link:** la producción sigue en segundo plano. Abre el link de nuevo (o
+  pulsa **📡 Ver el progreso en curso**) y vuelves a verla donde va.
+- **Falló un paso** (una clave, un servicio caído, un error de red): pulsa **🔁 Reanudar**. Cada paso deja su
+  archivo en Drive, así que se reutiliza todo lo que ya salió bien (guion, kit, imágenes, voz, subtítulos,
+  clips ya pagados, música) y se sigue desde el paso que falló. Puedes cambiar el proveedor de ese paso antes
+  de reanudar. En **📁 Mis reels** cada reel muestra ✅ listo, ❌ falló o ⏹ detenido, con el paso en el que quedó.
+- **Producir de nuevo la misma idea** crea otra carpeta (`idea-2`, `idea-3`…): nunca se pisa un reel anterior.
+
+## Reutilizar ajustes
+
+Cada reel guarda en `settings.json` todo lo que elegiste. En **📁 Mis reels**:
+**♻️ Usar estos ajustes** los carga en el formulario y **💾 Guardar preset** los guarda con un nombre. En
+**🎬 Producir reel → 📂 Presets** cargas cualquier preset o guardas los ajustes actuales. Un preset nunca
+trae marcada la confirmación de cobro.
+
 ## Tu carpeta en Drive
 
 ```
 YT-Channel-Studio/
 ├── config/api_keys.toml   tus claves (solo en tu Drive, nunca en este repositorio)
-├── reels/<idea>/          cada reel: video final, variantes, guion, voz, clips, subtítulos y kit
+├── config/presets/        tus presets de ajustes
+├── reels/<idea>/          cada reel: video, variantes, guion, voz, clips, subtítulos, kit, ajustes y estado
 ├── music/                 tus canciones (music/ai: las generadas con IA)
 ├── footage/               tus clips y fotos para la fuente «Mis clips»
 ├── fonts/                 fuentes de subtítulos; agrega las tuyas aquí
@@ -73,7 +91,7 @@ YT-Channel-Studio/
 
 Vuelve a ejecutar la **Celda 1**: trae la última versión sin reiniciar Colab. Para quedarte en una versión
 estable, cambia `VERSION = "main"` por una etiqueta de [Releases](https://github.com/adriexnet/yt-channel-studio/releases),
-por ejemplo `VERSION = "v2.0.0"`. Si una actualización cambia las dependencias de una herramienta, vuelve a
+por ejemplo `VERSION = "v2.1.0"`. Si una actualización cambia las dependencias de una herramienta, vuelve a
 ejecutar su celda.
 
 ## Desarrollo

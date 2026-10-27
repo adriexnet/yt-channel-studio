@@ -41,7 +41,7 @@ def services(http, keys, media, fonts, monkeypatch):
     if not os.path.exists(f"{L.MUSIC_DIR}/song.mp3"):
         os.system(f"ffmpeg -loglevel error -f lavfi -i sine=frequency=500:duration=3 {L.MUSIC_DIR}/song.mp3")
     data = {k: open(media[k], "rb").read() for k in ("portrait", "landscape", "voice", "image")}
-    seen = {"orientation": []}
+    seen = {"orientation": [], "portrait": data["portrait"]}
 
     def chat(call):
         payload = PLAN if "director" in call["json"]["messages"][0]["content"] else KIT
@@ -124,3 +124,52 @@ def test_broken_kit_does_not_stop_the_reel(services, http):
         "content": json.dumps(PLAN) if "director" in call["json"]["messages"][0]["content"] else "lo siento"}}]}))
     _, last = produce(clip_provider="pexels", idea="Kit roto")
     assert last["done"] and last["kit"] is None and "Publish kit failed" in last["log"]
+
+
+def test_resume_continues_from_the_failed_step_without_paying_twice(services, http):
+    fail = {"scene": 3}
+
+    def poll(call):
+        task = call["url"].split("/predictions/")[1].split("/")[0]
+        if task == "w3" and fail["scene"] == 3:
+            return FakeResponse(json={"code": 200, "data": {"status": "failed", "error": "provider overloaded"}})
+        return FakeResponse(json={"code": 200, "data": {"status": "completed", "outputs": [f"https://cdn.x/{task}.mp4"]}})
+    created = iter(f"w{i}" for i in range(1, 99))
+    http.add("POST", r"wavespeed\.ai/api/v3/", lambda call: FakeResponse(json={"code": 200, "data": {"id": next(created)}}))
+    http.add("GET", r"predictions/w\d+/result", poll)
+    http.add("GET", r"cdn\.x/w\d+", FakeResponse(content=services["portrait"]))
+    _, last = produce(clip_provider="wavespeed", idea="Lobos que ayudan", music_source="none")
+    reel = last["reel_dir"]
+    assert last["failed"] and "Reanudar" in last["log"]
+    assert P.read_run_state(reel)["status"] == "failed" and "Clip IA 3" in P.read_run_state(reel)["stage"]
+    assert sorted(os.path.basename(p) for p in glob.glob(f"{reel}/clips/*")) == ["ai_01.mp4", "ai_02.mp4"]
+    settings = P.load_settings(reel)
+    assert settings["idea"] == "Lobos que ayudan" and settings["clip_provider"] == "wavespeed" and "_meta" in settings
+
+    fail["scene"] = None
+    http.calls.clear()
+    snapshots = list(P.produce_reel(dict(BASE, clip_provider="wavespeed", idea="Lobos que ayudan", music_source="none"),
+                                    resume_dir=reel))
+    last = snapshots[-1]
+    assert last["done"] and last["reel_dir"] == reel
+    paid = [c for c in http.calls if c["method"] == "POST" and "wavespeed" in c["url"]]
+    assert len(paid) == 1                                     # only the clip that failed
+    assert not any("chat/completions" in c["url"] or "audio/speech" in c["url"] for c in http.calls)
+    assert last["log"].count("♻️") >= 5                      # script, kit, voice, word timings, clips 1-2
+    assert P.read_run_state(reel)["status"] == "done"
+
+
+def test_a_new_production_never_overwrites_an_earlier_reel(services):
+    _, first = produce(clip_provider="pexels", idea="Misma idea", music_source="none")
+    _, second = produce(clip_provider="pexels", idea="Misma idea", music_source="none")
+    assert first["done"] and second["done"]
+    assert second["reel_dir"] == first["reel_dir"] + "-2" and os.path.exists(first["video"])
+
+
+def test_stopping_marks_the_reel_as_stopped(services):
+    generator = P.produce_reel(dict(BASE, clip_provider="pexels", idea="Detener a mitad", music_source="none"))
+    for snapshot in generator:
+        if snapshot["stage"] == "Guion listo":
+            break
+    generator.close()
+    assert P.read_run_state(snapshot["reel_dir"])["status"] == "stopped"

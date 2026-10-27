@@ -8,7 +8,7 @@ REPO_URL = "https://github.com/adriexnet/yt-channel-studio.git"
 
 CELL_1 = f'''# Downloads (or updates) the code from GitHub, then connects Google Drive: approve the popup.
 REPO = "{REPO_URL}"
-VERSION = "main"          # a branch or a release tag, e.g. "v2.0.0", to stay on a fixed version
+VERSION = "main"          # a branch or a release tag, e.g. "v2.1.0", to stay on a fixed version
 
 import os, sys, shutil, subprocess, importlib
 CODE = "/content/yt-channel-studio"

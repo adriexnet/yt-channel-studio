@@ -678,12 +678,27 @@ def align_to_script(words, script):
     return out
 
 
+_WHISPER = {}
+
+
+def load_audio_16k(path):
+    """Mono 16 kHz float32 samples decoded by ffmpeg. faster-whisper's own decoder depends on PyAV, whose
+    API changes between versions (Colab's PyAV rejects its metadata_errors argument); ffmpeg never does."""
+    import numpy as np
+    r = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-f", "f32le", "-ac", "1", "-ar", "16000", "-"],
+                       capture_output=True)
+    if r.returncode != 0 or not r.stdout:
+        raise RuntimeError("ffmpeg could not read the voice for the subtitles: " + r.stderr.decode(errors="replace")[-300:])
+    return np.frombuffer(r.stdout, np.float32)
+
+
 def transcribe_words(audio_path, language="es", script=""):
     """Word-level timings on CPU, so Whisper never competes with Forge/ComfyUI for VRAM."""
-    from faster_whisper import WhisperModel
-    model = WhisperModel("small", device="cpu", compute_type="int8", download_root=TTS_MODELS_DIR)
-    segments, _ = model.transcribe(audio_path, language=language, vad_filter=True, word_timestamps=True,
-                                   initial_prompt=script[:400] or None)
+    if "small" not in _WHISPER:
+        from faster_whisper import WhisperModel
+        _WHISPER["small"] = WhisperModel("small", device="cpu", compute_type="int8", download_root=TTS_MODELS_DIR)
+    segments, _ = _WHISPER["small"].transcribe(load_audio_16k(audio_path), language=language, vad_filter=True,
+                                               word_timestamps=True, initial_prompt=script[:400] or None)
     words = [{"word": w.word.strip(), "start": round(w.start, 3), "end": round(w.end, 3)}
              for seg in segments for w in (seg.words or []) if w.word.strip()]
     return align_to_script(words, script) if script else words
@@ -1125,6 +1140,10 @@ def assemble_reel(run, reel_dir, montage=None, pct_start=72):
         if extra not in outputs:
             os.remove(extra)
     save_assets(reel_dir, montage=opt)
+    settings = load_settings(reel_dir)
+    if settings:                                   # settings.json always shows the montage of the current video
+        settings["montage"] = opt
+        save_settings(reel_dir, settings)
 
 
 # ---------------------------------------------------------------------------
@@ -1432,9 +1451,9 @@ class ReelRun:
         if response is not None:
             self.tech(f"HTTP {getattr(response, 'status_code', '?')} {getattr(response, 'url', '')}\n"
                       f"{getattr(response, 'text', '')[:2000]}")
-        self.tech(traceback.format_exc())
+        self.tech(traceback.format_exc())      # the full traceback goes to the technical log only
         if not isinstance(exc, RuntimeError):     # our own errors already explain the cause
-            self.log(traceback.format_exc()[-1200:])
+            self.log(f"{type(exc).__name__} (detalle completo en el log técnico)")
 
     def snapshot(self):
         return {"log": "\n".join(self.lines), "stage": self.stage, "pct": self.pct, "script": self.script,
@@ -1462,17 +1481,78 @@ def _wait_for(run, job):
     run.result = box.get("value")
 
 
-def produce_reel(settings):
+# Every step leaves its file in the reel folder; run_state.json says how the last run ended. With
+# resume=True a step whose file already exists is reused, so a failed reel continues from the failed step
+# without paying again for what was already generated.
+RUN_STATES = {"running": "⏳ en curso", "done": "✅ listo", "failed": "❌ falló", "stopped": "⏹ detenido"}
+
+
+def write_run_state(reel_dir, status, stage="", error=""):
+    try:
+        with open(f"{reel_dir}/run_state.json", "w", encoding="utf-8") as f:
+            json.dump({"status": status, "stage": stage, "error": str(error)[:500],
+                       "updated": time.strftime("%Y-%m-%d %H:%M:%S")}, f, ensure_ascii=False, indent=2)
+    except OSError:
+        pass
+
+
+def read_run_state(reel_dir):
+    try:
+        with open(f"{reel_dir}/run_state.json", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {"status": "done" if glob.glob(f"{reel_dir}/*_FINAL.mp4") else "failed", "stage": ""}
+
+
+def unique_reel_dir(slug):
+    """A new production never overwrites an earlier reel with the same idea: por-que-x, por-que-x-2, ..."""
+    folder, n = os.path.join(REELS_DIR, slug), 2
+    while os.path.exists(folder):
+        folder, n = os.path.join(REELS_DIR, f"{slug}-{n}"), n + 1
+    return folder
+
+
+SETTINGS_SKIPPED = ("clone_sample", "own_files")     # temporary uploads: their copies live in the reel folder
+
+
+def save_settings(reel_dir, settings):
+    """settings.json: everything chosen for this reel, reusable for another one (or as a preset)."""
+    data = {k: v for k, v in settings.items() if k not in SETTINGS_SKIPPED and not k.startswith("_")}
+    data["montage"] = montage_options(data.get("montage"))
+    previous = load_settings(reel_dir)
+    data["_meta"] = {"created": previous.get("_meta", {}).get("created") or time.strftime("%Y-%m-%d %H:%M:%S"),
+                     "updated": time.strftime("%Y-%m-%d %H:%M:%S"), "reel": os.path.basename(reel_dir)}
+    with open(f"{reel_dir}/settings.json", "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def load_settings(reel_dir):
+    try:
+        with open(f"{reel_dir}/settings.json", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _exists(path):
+    return bool(path) and os.path.exists(path) and os.path.getsize(path) > 0
+
+
+def produce_reel(settings, resume_dir=None):
     """Generator. Each kind of content uses its own provider, local or external, with no cross-conditions.
     settings keys: idea, language, duration, tone, instructions, num_scenes, llm_provider, llm_model,
     clip_provider, confirm_paid, own_files, keyframe_provider, voice_provider, voice, clone_sample,
-    cover_provider, music_source, make_kit, ai_width, ai_height, ai_frames, ai_steps, montage (dict)."""
+    cover_provider, music_source, make_kit, ai_width, ai_height, ai_frames, ai_steps, montage (dict).
+    resume_dir: an existing reel folder to continue; every step whose file is already there is reused."""
     run = ReelRun()
     s = dict(settings)
+    resume = bool(resume_dir)
     try:
         idea = (s.get("idea") or "").strip()
         if not idea:
             raise RuntimeError("Escribe una idea para el reel.")
+        if resume and not os.path.isdir(resume_dir):
+            raise RuntimeError(f"No encuentro la carpeta del reel para reanudar: {resume_dir}")
         llm_key = llm_provider_choices().get(s["llm_provider"])
         if not llm_key:
             raise RuntimeError(f"Proveedor LLM desconocido: {s['llm_provider']}")
@@ -1483,43 +1563,55 @@ def produce_reel(settings):
         aspect = montage["aspect"]
         clip = CLIP_PROVIDERS[clip_provider]
         own_files = [f for f in (s.get("own_files") or []) if f and os.path.exists(f)]
+        saved_own = sorted(glob.glob(f"{resume_dir}/clips/own_*")) if resume else []
 
         # --- Preflight -----------------------------------------------------
         run.set("Comprobando proveedores", 1)
-        run.log("Checking Google Drive, providers, keys and tools...")
+        run.log("Resuming: steps already done are reused..." if resume else
+                "Checking Google Drive, providers, keys and tools...")
         yield run.snapshot()
         if not drive_responds():
             raise RuntimeError("Google Drive no responde (pasa tras horas de sesión). Vuelve a ejecutar la Celda 1 "
                                "para reconectarlo y luego la Celda 7.")
         errors, warnings = check_selection(llm_key, clip_provider, voice_provider, cover_provider, keyframe_provider,
-                                           music_source, s.get("confirm_paid"), len(own_files))
+                                           music_source, s.get("confirm_paid"), len(own_files) or len(saved_own))
         for w in warnings:
             run.log(f"⚠️ {re.sub('<[^>]+>', '', w)}")
         if errors:
             raise RuntimeError("No se puede empezar:\n- " + "\n- ".join(re.sub("<[^>]+>", "", e) for e in errors))
 
-        slug = slugify(idea)
-        reel_dir = run.reel_dir = os.path.join(REELS_DIR, slug)
+        reel_dir = run.reel_dir = resume_dir or unique_reel_dir(slugify(idea))
+        slug = os.path.basename(reel_dir)
         work_dir = os.path.join(WORK_DIR, slug)
         for d in (reel_dir, f"{reel_dir}/images", f"{reel_dir}/clips", work_dir):
             os.makedirs(d, exist_ok=True)
-        with open(f"{reel_dir}/settings.json", "w", encoding="utf-8") as f:
-            json.dump({k: v for k, v in s.items() if k not in ("clone_sample", "own_files")}, f, indent=2,
-                      ensure_ascii=False)
+        write_run_state(reel_dir, "running", run.stage)
+        save_settings(reel_dir, s)
         save_assets(reel_dir, language=language, music_source=music_source, montage=montage)
         run.log(f"Reel folder in Drive: {reel_dir}")
 
+        def reuse(path, caption):
+            if resume and _exists(path):
+                run.log(f"♻️ {caption}: ya estaba hecho, se reutiliza.")
+                return True
+            return False
+
         # --- 1. Script (text) -------------------------------------------------
         run.set("Escribiendo guion", 3)
-        run.log(f"Script with {s['llm_provider']} ({s['llm_model']}): {LANGUAGES.get(language, ('?',))[0]}, "
-                f"~{s.get('duration', 35)} s, tone {s.get('tone', 'informativo')}...")
-        yield run.snapshot()
-        plan = generate_plan(idea, llm_key, s["llm_model"], int(s.get("num_scenes", 5)), language,
-                             int(s.get("duration", 35)), s.get("tone", "informativo"), s.get("instructions", ""), aspect)
-        with open(f"{reel_dir}/plan.json", "w", encoding="utf-8") as f:
-            json.dump(plan, f, indent=2, ensure_ascii=False)
-        with open(f"{reel_dir}/script.txt", "w", encoding="utf-8") as f:
-            f.write(plan["script"])
+        if reuse(f"{reel_dir}/plan.json", "Guion"):
+            with open(f"{reel_dir}/plan.json", encoding="utf-8") as f:
+                plan = json.load(f)
+        else:
+            run.log(f"Script with {s['llm_provider']} ({s['llm_model']}): {LANGUAGES.get(language, ('?',))[0]}, "
+                    f"~{s.get('duration', 35)} s, tone {s.get('tone', 'informativo')}...")
+            yield run.snapshot()
+            plan = generate_plan(idea, llm_key, s["llm_model"], int(s.get("num_scenes", 5)), language,
+                                 int(s.get("duration", 35)), s.get("tone", "informativo"), s.get("instructions", ""),
+                                 aspect)
+            with open(f"{reel_dir}/plan.json", "w", encoding="utf-8") as f:
+                json.dump(plan, f, indent=2, ensure_ascii=False)
+            with open(f"{reel_dir}/script.txt", "w", encoding="utf-8") as f:
+                f.write(plan["script"])
         run.script = plan["script"]
         scenes = plan["scenes"]
         run.set("Guion listo", 10)
@@ -1529,16 +1621,19 @@ def produce_reel(settings):
         # --- 2. Publish kit (same LLM; ready to copy while the video renders) ----------
         if s.get("make_kit", True):
             run.set("Kit de publicación", 11)
-            run.log("Writing titles, captions, hashtags and hooks for YouTube, TikTok, Instagram and Facebook...")
-            yield run.snapshot()
-            try:
-                run.kit = generate_publish_kit(llm_key, s["llm_model"], idea, plan, language)
-                save_publish_kit(run.kit, reel_dir)
-                save_assets(reel_dir, hooks=run.kit.get("on_screen_hooks", []))
-                score = run.kit.get("virality", {}).get("overall", "?")
-                run.log(f"Publish kit ready (viral potential {score}/100). Saved as publish_kit.md in Drive.")
-            except Exception as exc:     # the kit is a bonus: never lose the reel because of it
-                run.log(f"⚠️ Publish kit failed, the reel continues: {exc}")
+            if reuse(f"{reel_dir}/publish_kit.json", "Kit de publicación"):
+                run.kit = load_publish_kit(reel_dir)
+            else:
+                run.log("Writing titles, captions, hashtags and hooks for YouTube, TikTok, Instagram and Facebook...")
+                yield run.snapshot()
+                try:
+                    run.kit = generate_publish_kit(llm_key, s["llm_model"], idea, plan, language)
+                    save_publish_kit(run.kit, reel_dir)
+                    save_assets(reel_dir, hooks=run.kit.get("on_screen_hooks", []))
+                    score = run.kit.get("virality", {}).get("overall", "?")
+                    run.log(f"Publish kit ready (viral potential {score}/100). Saved as publish_kit.md in Drive.")
+                except Exception as exc:     # the kit is a bonus: never lose the reel because of it
+                    run.log(f"⚠️ Publish kit failed, the reel continues: {exc}")
             yield run.snapshot()
 
         # --- 3. Images: cover, first frames for local AI, or the photos themselves -------
@@ -1547,20 +1642,23 @@ def produce_reel(settings):
         scene_image_source = photo_source or keyframe_source
         if cover_provider != "none" and plan.get("cover_prompt"):
             run.set("Portada", 12)
-            run.log(f"Cover with {IMAGE_PROVIDERS[cover_provider]['label']}...")
-            yield run.snapshot()
-            cover = generate_image(cover_provider, plan["cover_prompt"], f"{reel_dir}/cover.png", aspect)
+            cover = f"{reel_dir}/cover.png"
+            if not reuse(cover, "Portada"):
+                run.log(f"Cover with {IMAGE_PROVIDERS[cover_provider]['label']}...")
+                yield run.snapshot()
+                generate_image(cover_provider, plan["cover_prompt"], cover, aspect)
+                run.log("Cover saved.")
             run.media.append((cover, "Portada"))
-            run.log("Cover saved.")
             yield run.snapshot()
         images = []
         if scene_image_source:
             for i, scene in enumerate(scenes, 1):
                 run.set(f"Imagen {i}/{len(scenes)}", 13 + 12 * (i - 1) / len(scenes))
-                run.log(f"Scene {i}: image with {IMAGE_PROVIDERS[scene_image_source]['label']}...")
-                yield run.snapshot()
-                path = generate_image(scene_image_source, scene["image_prompt"],
-                                      f"{reel_dir}/images/scene_{i:02}.png", aspect)
+                path = f"{reel_dir}/images/scene_{i:02}.png"
+                if not reuse(path, f"Imagen {i}"):
+                    run.log(f"Scene {i}: image with {IMAGE_PROVIDERS[scene_image_source]['label']}...")
+                    yield run.snapshot()
+                    generate_image(scene_image_source, scene["image_prompt"], path, aspect)
                 images.append(path)
                 run.media.append((path, f"Escena {i}"))
                 yield run.snapshot()
@@ -1570,24 +1668,30 @@ def produce_reel(settings):
         # --- 4. Voice (audio) + the timing of every word ----------------------------
         voice_label = VOICE_PROVIDERS[voice_provider]["label"]
         run.set(f"Voz ({voice_label})", 26)
-        run.log(f"Voice with {voice_label}...")
-        yield run.snapshot()
-        yield from _wait_for(run, lambda: synthesize_voice(plan["script"], voice_provider, s.get("voice", ""),
-                                                           s.get("clone_sample"), "", f"{work_dir}/voice.mp3"))
-        audio_path, message = run.result
-        if not audio_path:
-            raise RuntimeError(message)
-        voice_copy = f"{reel_dir}/voice{os.path.splitext(audio_path)[1]}"
-        shutil.copy(audio_path, voice_copy)
-        save_assets(reel_dir, voice=voice_copy)
-        duration = media_duration(audio_path) / montage["voice_speed"]
-        run.log(f"{message} ({duration:.1f} s at the chosen speed)")
+        saved_voice = _absolute(reel_dir, load_assets(reel_dir).get("voice") or "voice.mp3")
+        new_voice = not reuse(saved_voice, "Voz")
+        if new_voice:
+            run.log(f"Voice with {voice_label}...")
+            yield run.snapshot()
+            yield from _wait_for(run, lambda: synthesize_voice(plan["script"], voice_provider, s.get("voice", ""),
+                                                               s.get("clone_sample"), "", f"{work_dir}/voice.mp3"))
+            audio_path, message = run.result
+            if not audio_path:
+                raise RuntimeError(message)
+            saved_voice = f"{reel_dir}/voice{os.path.splitext(audio_path)[1]}"
+            shutil.copy(audio_path, saved_voice)
+            save_assets(reel_dir, voice=saved_voice)
+            run.log(message)
+        duration = media_duration(saved_voice) / montage["voice_speed"]
+        run.log(f"Voice: {duration:.1f} s at the chosen speed.")
         run.set("Sincronizando subtítulos", 28)
-        yield run.snapshot()
-        yield from _wait_for(run, lambda: transcribe_words(audio_path, language, plan["script"]))
-        with open(f"{reel_dir}/words.json", "w", encoding="utf-8") as f:
-            json.dump(run.result, f, ensure_ascii=False)
-        run.log(f"Word timings ready ({len(run.result)} words).")
+        words_path = f"{reel_dir}/words.json"
+        if new_voice or not reuse(words_path, "Tiempos de cada palabra"):
+            yield run.snapshot()
+            yield from _wait_for(run, lambda: transcribe_words(saved_voice, language, plan["script"]))
+            with open(words_path, "w", encoding="utf-8") as f:
+                json.dump(run.result, f, ensure_ascii=False)
+            run.log(f"Word timings ready ({len(run.result)} words).")
         yield run.snapshot()
 
         # --- 5. Clips (video) ---------------------------------------------------------
@@ -1598,22 +1702,30 @@ def produce_reel(settings):
             for i, scene in enumerate(scenes, 1):
                 run.set(f"Clip {i}/{len(scenes)}", 32 + 38 * (i - 1) / len(scenes))
                 query = scene.get("search_query") or idea
-                urls = [u for u in (search(query, orientation) or search(idea, orientation)) if u not in used]
-                if not urls:
-                    raise RuntimeError(f"{clip['label']} no encontró video para «{query}».")
-                used.add(urls[0])
-                path = download_file(urls[0], f"{reel_dir}/clips/stock_{i:02}.mp4")
+                path = f"{reel_dir}/clips/stock_{i:02}.mp4"
+                if not reuse(path, f"Clip {i}"):
+                    urls = [u for u in (search(query, orientation) or search(idea, orientation)) if u not in used]
+                    if not urls:
+                        raise RuntimeError(f"{clip['label']} no encontró video para «{query}».")
+                    used.add(urls[0])
+                    download_file(urls[0], path)
+                    run.log(f"Clip {i} from {clip['label']}: '{query}'")
                 clips.append(path)
                 run.media.append((path, f"Clip {i}: {query}"))
-                run.log(f"Clip {i} from {clip['label']}: '{query}'")
                 yield run.snapshot()
         elif clip_provider == "upload":
-            for i, src in enumerate(own_files, 1):
-                path = f"{reel_dir}/clips/own_{i:02}{os.path.splitext(src)[1].lower()}"
-                shutil.copy(src, path)
-                clips.append(path)
-                run.media.append((path, f"Tu clip {i}"))
-            run.log(f"{len(clips)} of your files copied to the reel folder.")
+            if own_files:
+                for old in saved_own:
+                    os.remove(old)
+                for i, src in enumerate(own_files, 1):
+                    path = f"{reel_dir}/clips/own_{i:02}{os.path.splitext(src)[1].lower()}"
+                    shutil.copy(src, path)
+                    clips.append(path)
+                run.log(f"{len(clips)} of your files copied to the reel folder.")
+            else:
+                clips = saved_own
+                run.log(f"♻️ {len(clips)} of your files from the earlier run.")
+            run.media += [(p, f"Tu clip {i}") for i, p in enumerate(clips, 1)]
         elif clip_provider == "footage":
             clips = footage_files()
             run.media += [(p, os.path.basename(p)) for p in clips[:12]]
@@ -1627,30 +1739,32 @@ def produce_reel(settings):
                 width = height = min(width, height)
             for i, scene in enumerate(scenes, 1):
                 run.set(f"Clip IA {i}/{len(scenes)}", 32 + 38 * (i - 1) / len(scenes))
-                run.log(f"Scene {i}: {clip['label']} {mode} ({width}x{height}, {s.get('ai_frames', 49)} frames)...")
-                yield run.snapshot()
                 path = f"{reel_dir}/clips/scene_{i:02}.mp4"
-                yield from _wait_for(run, lambda: comfy_generate_video(
-                    clip_provider, images[i - 1] if images else None, scene["motion_prompt"], path, width, height,
-                    s.get("ai_frames", 49), s.get("ai_steps", 20), on_raw=run.tech))
+                if not reuse(path, f"Clip {i}"):
+                    run.log(f"Scene {i}: {clip['label']} {mode} ({width}x{height}, {s.get('ai_frames', 49)} frames)...")
+                    yield run.snapshot()
+                    yield from _wait_for(run, lambda: comfy_generate_video(
+                        clip_provider, images[i - 1] if images else None, scene["motion_prompt"], path, width, height,
+                        s.get("ai_frames", 49), s.get("ai_steps", 20), on_raw=run.tech))
+                    run.log(f"Scene {i}: clip ready.")
                 clips.append(path)
                 run.media.append((path, f"Clip {i}"))
-                run.log(f"Scene {i}: clip ready.")
                 yield run.snapshot()
             comfy_free()
         elif clip["type"] == "external_ai":
             seconds = duration / len(scenes)
             for i, scene in enumerate(scenes, 1):
                 run.set(f"Clip IA {i}/{len(scenes)} ({clip['label']})", 32 + 38 * (i - 1) / len(scenes))
-                run.log(f"Scene {i}: {clip['label']} text-to-video (paid)...")
-                yield run.snapshot()
                 path = f"{reel_dir}/clips/ai_{i:02}.mp4"
-                prompt = f"{scene['image_prompt']}. {scene['motion_prompt']}"
-                yield from _wait_for(run, lambda: generate_ai_video(clip_provider, prompt, seconds, aspect, path,
-                                                                    on_raw=run.tech))
+                if not reuse(path, f"Clip {i} (ya pagado)"):
+                    run.log(f"Scene {i}: {clip['label']} text-to-video (paid)...")
+                    yield run.snapshot()
+                    prompt = f"{scene['image_prompt']}. {scene['motion_prompt']}"
+                    yield from _wait_for(run, lambda: generate_ai_video(clip_provider, prompt, seconds, aspect, path,
+                                                                        on_raw=run.tech))
+                    run.log(f"Scene {i}: clip ready.")
                 clips.append(path)
                 run.media.append((path, f"Clip {i}"))
-                run.log(f"Scene {i}: clip ready.")
                 yield run.snapshot()
         else:                                                      # AI photos with motion
             clips = images
@@ -1659,8 +1773,15 @@ def produce_reel(settings):
         yield run.snapshot()
 
         # --- 6. Music -----------------------------------------------------------------
+        saved_song = load_assets(reel_dir).get("music")
+        saved_song = _absolute(reel_dir, saved_song) if saved_song else ""
         song = None
-        if music_source == "library" and music_files():
+        if music_source == "none":
+            pass
+        elif resume and _exists(saved_song) and (music_source != "elevenlabs" or saved_song.startswith(MUSIC_AI_DIR)):
+            song = saved_song
+            run.log(f"♻️ Música: {os.path.basename(song)} (la de la vez anterior).")
+        elif music_source == "library" and music_files():
             song = random.choice(music_files())
             run.log(f"Background music: {os.path.basename(song)}")
         elif music_source == "elevenlabs":
@@ -1683,9 +1804,17 @@ def produce_reel(settings):
         run.done = True
         run.set("Listo", 100)
         run.log(f"DONE. {len(run.videos)} video(s) saved in Drive: {reel_dir}")
+        write_run_state(reel_dir, "done", "Listo")
         yield run.snapshot()
+    except GeneratorExit:
+        if run.reel_dir:
+            write_run_state(run.reel_dir, "stopped", run.stage)
+        raise
     except Exception as exc:
         run.fail(exc)
+        if run.reel_dir:
+            write_run_state(run.reel_dir, "failed", run.stage, exc)
+            run.log("🔁 Pulsa «Reanudar» para seguir desde aquí: lo que ya se generó no se vuelve a hacer.")
         yield run.snapshot()
 
 
@@ -1707,6 +1836,7 @@ def reassemble_reel(reel_dir, montage):
         yield from assemble_reel(run, reel_dir, montage, pct_start=5)
         run.done = True
         run.set("Listo", 100)
+        write_run_state(reel_dir, "done", "Listo")
         run.log("DONE.")
         yield run.snapshot()
     except Exception as exc:

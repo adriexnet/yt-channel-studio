@@ -2,6 +2,9 @@
 first clone, update after a new commit, a fixed version tag, and the Drive copy when GitHub is unreachable."""
 import json, os, shutil, subprocess, sys
 import pytest
+import studio
+
+VERSION = studio.__version__
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 FAKE_COLAB = "import sys, types\ncolab = types.ModuleType('google.colab')\ncolab.drive = types.SimpleNamespace(mount=lambda path: None)\n" \
@@ -42,12 +45,12 @@ def run_cell_1(tmp_path, repo_url, version="main"):
 
 def test_first_clone_then_update_then_fixed_version(tmp_path, origin):
     out = run_cell_1(tmp_path, origin)
-    assert f"LOADED_FROM {tmp_path}/code/studio/__init__.py 2.0.0" in out
+    assert f"LOADED_FROM {tmp_path}/code/studio/__init__.py {VERSION}" in out
     init = origin / "studio" / "__init__.py"
-    init.write_text(init.read_text().replace('__version__ = "2.0.0"', '__version__ = "2.0.1"'))
+    init.write_text(init.read_text().replace(f'__version__ = "{VERSION}"', '__version__ = "99.0.0"'))
     git("commit", "-q", "-am", "v2", cwd=origin)
-    assert "2.0.1" in run_cell_1(tmp_path, origin)                     # re-running Cell 1 brings the update
-    assert "2.0.0" in run_cell_1(tmp_path, origin, version="v1.0.0")   # and a tag pins an older version
+    assert "99.0.0" in run_cell_1(tmp_path, origin)                     # re-running Cell 1 brings the update
+    assert VERSION in run_cell_1(tmp_path, origin, version="v1.0.0")    # and a tag pins an older version
 
 
 def test_drive_copy_when_github_is_unreachable(tmp_path, origin):
