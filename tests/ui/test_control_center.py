@@ -320,7 +320,7 @@ def test_background_job_survives_a_disconnected_page(monkeypatch):
         yield snapshot(stage="Done", pct=100, done=True, reel_dir="/r")
     monkeypatch.setattr(CC, "produce_reel", slow_produce)
     monkeypatch.setattr(CC, "drive_responds", lambda timeout=10: False)
-    empty = [""] * len(CC.PRODUCE_KEYS) + list(P.DEFAULT_MONTAGE.values())
+    empty = ["an idea"] + [""] * (len(CC.PRODUCE_KEYS) - 1) + list(P.DEFAULT_MONTAGE.values())
     page = CC.produce_ui(*empty)
     next(page)                                       # "Starting…"
     assert "Storyboard" in next(page)[0]
@@ -339,7 +339,7 @@ def test_stop_cancels_the_job(monkeypatch):
             yield snapshot(stage="Clips", pct=40)
             time.sleep(0.01)
     monkeypatch.setattr(CC, "produce_reel", endless)
-    page = CC.produce_ui(*([""] * len(CC.PRODUCE_KEYS) + list(P.DEFAULT_MONTAGE.values())))
+    page = CC.produce_ui(*(["an idea"] + [""] * (len(CC.PRODUCE_KEYS) - 1) + list(P.DEFAULT_MONTAGE.values())))
     next(page), next(page)
     assert "Stopping" in CC.stop_ui()
     last = list(page)[-1]
@@ -499,3 +499,21 @@ def test_new_reel_brings_the_composer_back():
 
 def test_publishing_needs_a_platform(saved_reel):
     assert "at least one platform" in list(CC.publish_ui(saved_reel, [], "", "UTC", "private", "SELF_ONLY", True))[-1]
+
+
+def test_an_empty_idea_starts_nothing(monkeypatch):
+    monkeypatch.setattr(CC.jobs, "start", lambda *a, **k: pytest.fail("no job for an empty idea"))
+    outputs = list(CC.produce_ui(*[""] * len(CC.PRODUCE_KEYS), *P.DEFAULT_MONTAGE.values()))
+    assert len(outputs) == 1 and "Write an idea" in outputs[0][CC.OUT["progress"]]
+
+
+def test_polling_shows_the_running_job(monkeypatch):
+    class Job:
+        running = True
+        snapshot = {"stage": "Image 2/6", "pct": 25, "failed": False, "done": False, "log": "[01:00] Scene 2",
+                    "tech": "detail", "review": None}
+    monkeypatch.setattr(CC.jobs, "current", lambda: Job())
+    progress, step, stepper, tech = CC.poll_ui()
+    assert "25%" in progress and "Scene 2" in step and tech == "detail" and stepper
+    Job.running = False
+    assert all(isinstance(value, dict) for value in CC.poll_ui())      # nothing running: nothing changes

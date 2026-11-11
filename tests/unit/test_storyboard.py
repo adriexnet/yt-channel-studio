@@ -100,3 +100,15 @@ def test_format_words_have_no_ratio():
     for aspect, words in FORMAT_WORDS.items():
         assert ":" not in words
         assert aspect not in build_scene_prompts_prompt(aspect)
+
+
+def test_prompts_not_in_english_are_found():
+    from studio.storyboard import looks_english, scenes_to_translate
+    assert looks_english("A wolf howling at the moon in an open field, cinematic light")
+    assert not looks_english("Un lobo aullando fuertemente en un campo abierto a la luz de la luna")
+    assert not looks_english("Lobos en un bosque comunicándose")
+    assert looks_english("slow push-in")
+    plan = {"scenes": [{"id": 1, "image_prompt": "A wolf on a hill with the moon behind", "motion_prompt": "slow pan"},
+                       {"id": 2, "image_prompt": "Un lobo marcando su territorio con una postura fuerte",
+                        "motion_prompt": "slow pan"}]}
+    assert scenes_to_translate(plan) == [2]
