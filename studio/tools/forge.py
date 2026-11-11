@@ -86,7 +86,8 @@ def start(models=None):
         "PIP_CONSTRAINT": f"{FORGE_DIR}/requirements_versions.txt",        # any pip install Forge runs keeps its pins
     })
     proc = start_background([forge_python, "launch.py", "--api", "--listen", "--port", str(PORTS["forge"]),
-                             "--enable-insecure-extension-access", "--cors-allow-origins=*"],
+                             "--enable-insecure-extension-access", "--cors-allow-origins=*",
+                             "--no-hashing"],   # hashing reads the whole 16 GB checkpoint from Drive before each load
                             FORGE_LOG, cwd=FORGE_DIR, env=env)
     problems = [] if ok else [f"numpy/scikit-image still incompatible: {info}"]
     url = ""
