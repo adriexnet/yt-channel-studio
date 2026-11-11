@@ -50,7 +50,7 @@ CELLS = [
     ("## 📦 Cell 2 · Environment\nSystem tools, cloudflared, uv, the notebook packages and the subtitle fonts. "
      "Without a GPU it tells you what is unavailable instead of stopping.",
      "from studio import setup\nsetup.environment()"),
-    ("## 🧠 Cell 3 · Ollama *(optional)*\nLocal LLMs (weights persist in Drive) + chat UI. "
+    ("## 🧠 Cell 3 · Ollama *(optional)*\nLocal LLMs (downloaded to the local disk when this cell runs) + chat UI."
      "Skip it if you use an external LLM.",
      'from studio.tools import ollama\nollama.start(models=["qwen2.5:14b", "deepseek-r1:14b"])'),
     ("## 🎨 Cell 4 · Forge WebUI *(optional)*\nFLUX images in a Python 3.10 venv: local covers, base images "

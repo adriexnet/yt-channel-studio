@@ -91,13 +91,14 @@ VENVS_DIR = f"{CONTENT_DIR}/venvs"        # one isolated venv per app (recreated
 UV_CACHE_DIR = f"{CONTENT_DIR}/uv_cache"  # shared wheel cache so torch downloads once per Python version
 HF_CACHE_DIR = f"{CONTENT_DIR}/hf_cache"  # HuggingFace cache MUST be local: Drive has no symlinks and corrupts it
 APPS_DIR = f"{CONTENT_DIR}/apps"          # Forge and ComfyUI source code (cloned each session)
+LOCAL_MODELS_DIR = f"{CONTENT_DIR}/models"  # weights downloaded each session to the fast local disk, not Drive
 
 
 def log_path(name):
     """Server and tunnel logs live on the local disk: `!tail -f` them from any cell."""
     return f"{CONTENT_DIR}/{name}.log"
 
-MODEL_SUBDIRS = ["ollama", "unet", "clip", "vae", "qwen_edit", "video", "tts"]
+MODEL_SUBDIRS = ["unet", "clip", "vae", "qwen_edit", "video", "tts"]   # Ollama weights live in LOCAL_MODELS_DIR
 
 # Same torch for every app; cu128 covers T4, L4, A100, H100 and Blackwell GPUs.
 TORCH_SPEC = ("torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 "
