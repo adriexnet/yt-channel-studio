@@ -39,12 +39,12 @@ def test_caption_limits(kit):
 
 def test_markdown_copy(kit):
     md = P.kit_markdown(kit)
-    assert all(x in md for x in ("YouTube Shorts", "TikTok", "Instagram Reels", "Facebook Reels", "Comentarios semilla"))
+    assert all(x in md for x in ("YouTube Shorts", "TikTok", "Instagram Reels", "Facebook Reels", "Seed comments"))
 
 
 def test_kit_prompt_language():
-    assert "Brazilian Portuguese" in P.build_kit_prompt("pt")
-    assert "Latin American Spanish" in P.build_kit_prompt("es")
+    assert "for Portuguese-speaking audiences" in P.build_kit_prompt("Portuguese")
+    assert "All text in Spanish" in P.build_kit_prompt("Spanish")
 
 
 def form_dict(form):

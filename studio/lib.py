@@ -138,7 +138,7 @@ DEFAULT_API_KEYS = {
     "infistar": {"api_key": "", "model": "doubao-seedance-2-0-fast-260128"},
     "image_api": {"api_key": "", "base_url": "https://api.openai.com/v1", "model": "gpt-image-1", "size": "1024x1536"},
     "elevenlabs": {"api_key": "", "voice_id": "JBFqnCBsd6RMkjVDRZzb", "tts_model": "eleven_multilingual_v2",
-                   "music_model": "music_v1"},
+                   "music_model": "music_v1", "sfx_model": "eleven_text_to_sound_v2"},
     "azure": {"speech_key": "", "speech_region": "eastus", "voice": "es-MX-JorgeNeural"},
     "siliconflow": {"api_key": ""},
     "mimo": {"api_key": "", "model": "mimo-v2.5-tts"},
@@ -535,34 +535,34 @@ def launch_gradio(blocks, port, css=None):
 # Credentials: one per [section] of api_keys.toml. The Control Center builds its key tab from this.
 # ---------------------------------------------------------------------------
 CREDENTIAL_CATEGORIES = [
-    ("llm", "🧠 Modelos de lenguaje"),
-    ("stock", "🎞️ Clips de stock"),
-    ("ai_video", "🎬 Video con IA externa (de pago)"),
-    ("image", "🖼️ Imagen con IA"),
-    ("voice", "🎙️ Voz y música"),
-    ("publish", "📤 Publicación"),
-    ("other", "⚙️ Otros"),
+    ("llm", "🧠 Language models"),
+    ("stock", "🎞️ Stock clips"),
+    ("ai_video", "🎬 External AI video (paid)"),
+    ("image", "🖼️ AI images"),
+    ("voice", "🎙️ Voice, music and sound"),
+    ("publish", "📤 Publishing"),
+    ("other", "⚙️ Other"),
 ]
 
 FIELD_LABELS = {
-    "api_key": "API key", "speech_key": "Speech key", "speech_region": "Región", "token": "Token",
-    "chat_model": "Modelo de chat", "tts_model": "Modelo TTS", "tts_voice": "Voz TTS por defecto",
-    "base_url": "Base URL", "model": "Modelo", "size": "Tamaño de imagen", "resolution": "Resolución",
-    "voice_id": "Voice ID por defecto", "voice": "Voz por defecto", "model_id": "Model ID",
-    "music_model": "Modelo de música", "username": "Usuario (perfil de Upload-Post)",
-    "image_model": "Modelo de imagen", "video_model": "Modelo de video", "video_resolution": "Resolución de video",
-    "facebook_page_id": "Facebook Page ID (opcional)",
+    "api_key": "API key", "speech_key": "Speech key", "speech_region": "Region", "token": "Token",
+    "chat_model": "Chat model", "tts_model": "TTS model", "tts_voice": "Default TTS voice",
+    "base_url": "Base URL", "model": "Model", "size": "Image size", "resolution": "Resolution",
+    "voice_id": "Default voice ID", "voice": "Default voice", "model_id": "Model ID",
+    "music_model": "Music model", "sfx_model": "Sound effects model", "username": "User (Upload-Post profile)",
+    "image_model": "Image model", "video_model": "Video model", "video_resolution": "Video resolution",
+    "facebook_page_id": "Facebook Page ID (optional)",
 }
 SECRET_FIELDS = {"api_key", "speech_key", "token"}
 
 # section -> label, category, editable fields, required fields, where to get the key
 CREDENTIALS = {
-    "openai": dict(label="OpenAI (ChatGPT, voz TTS)", category="llm",
+    "openai": dict(label="OpenAI (ChatGPT, TTS voice)", category="llm",
                    fields=["api_key", "chat_model", "tts_model", "tts_voice"], required=["api_key"],
                    link="https://platform.openai.com/api-keys"),
     "anthropic": dict(label="Anthropic (Claude)", category="llm", fields=["api_key", "chat_model"],
                       required=["api_key"], link="https://console.anthropic.com/settings/keys"),
-    "gemini": dict(label="Google Gemini (LLM, voz, imagen Nano Banana y video Omni)", category="llm",
+    "gemini": dict(label="Google Gemini (LLM, voice, Nano Banana images and Omni video)", category="llm",
                    fields=["api_key", "chat_model", "tts_model", "image_model", "video_model", "video_resolution"],
                    required=["api_key"],
                    link="https://aistudio.google.com/apikey"),
@@ -585,11 +585,11 @@ CREDENTIALS = {
                            required=["api_key"], link="https://metaso.cn"),
     "infistar": dict(label="Infistar AI Video", category="ai_video", fields=["api_key", "model"],
                      required=["api_key", "model"], link="https://infistar.cc"),
-    "image_api": dict(label="Texto a imagen compatible con OpenAI", category="image",
+    "image_api": dict(label="OpenAI-compatible text to image", category="image",
                       fields=["base_url", "api_key", "model", "size"], required=["api_key", "base_url"],
                       link="https://platform.openai.com/api-keys"),
-    "elevenlabs": dict(label="ElevenLabs (voz y música IA)", category="voice",
-                       fields=["api_key", "voice_id", "tts_model", "music_model"], required=["api_key"],
+    "elevenlabs": dict(label="ElevenLabs (voice, AI music and sound effects)", category="voice",
+                       fields=["api_key", "voice_id", "tts_model", "music_model", "sfx_model"], required=["api_key"],
                        link="https://elevenlabs.io/app/settings/api-keys"),
     "azure": dict(label="Azure Speech", category="voice", fields=["speech_key", "speech_region", "voice"],
                   required=["speech_key", "speech_region"],
@@ -605,10 +605,10 @@ CREDENTIALS = {
                        required=["api_key"], link="https://fish.audio/app/developers"),
     "voxcpm": dict(label="VoxCPM TTS (ModelBest)", category="voice", fields=["api_key", "model_id", "base_url"],
                    required=["api_key", "model_id", "base_url"], link="https://platform.modelbest.cn/console/"),
-    "upload_post": dict(label="Upload-Post (publica en TikTok, Instagram, YouTube y Facebook)", category="publish",
+    "upload_post": dict(label="Upload-Post (publishes to TikTok, Instagram, YouTube and Facebook)", category="publish",
                         fields=["api_key", "username", "facebook_page_id"], required=["api_key", "username"],
                         link="https://app.upload-post.com/api-keys"),
-    "huggingface": dict(label="HuggingFace (descargas de modelos)", category="other", fields=["token"],
+    "huggingface": dict(label="HuggingFace (model downloads)", category="other", fields=["token"],
                         required=["token"], link="https://huggingface.co/settings/tokens"),
 }
 
@@ -622,10 +622,10 @@ def credential_missing(section):
 # Services started by the tool cells (used to warn before a run instead of failing halfway)
 # ---------------------------------------------------------------------------
 SERVICES = {
-    "ollama": dict(label="Ollama", cell="Celda 3", url=f"http://127.0.0.1:{PORTS['ollama_api']}/"),
-    "forge": dict(label="Forge (FLUX)", cell="Celda 4", url=f"http://127.0.0.1:{PORTS['forge']}/sdapi/v1/options"),
-    "comfy": dict(label="ComfyUI", cell="Celda 5", url=f"http://127.0.0.1:{PORTS['comfy']}/"),
-    "f5": dict(label="F5-TTS", cell="Celda 6", url=None),
+    "ollama": dict(label="Ollama", cell="Cell 3", url=f"http://127.0.0.1:{PORTS['ollama_api']}/"),
+    "forge": dict(label="Forge (FLUX)", cell="Cell 4", url=f"http://127.0.0.1:{PORTS['forge']}/sdapi/v1/options"),
+    "comfy": dict(label="ComfyUI", cell="Cell 5", url=f"http://127.0.0.1:{PORTS['comfy']}/"),
+    "f5": dict(label="F5-TTS", cell="Cell 6", url=None),
 }
 F5_VENV_DIR, F5_PYTHON = venv_paths("f5tts")
 
@@ -640,7 +640,7 @@ def service_ready(name):
 # Provider registry. Every kind of content (text, images, clips, voice, music) picks its provider on its
 # own, local or external; the assembly accepts any combination because everything becomes a file first.
 # ---------------------------------------------------------------------------
-KIND_LABELS = {"local": "🖥️ Local", "external": "☁️ Externo"}
+KIND_LABELS = {"local": "🖥️ Local", "external": "☁️ External"}
 BASE_LLM_PROVIDERS = {
     "Ollama (local)": "ollama",
     "OpenAI (ChatGPT)": "openai",
@@ -665,34 +665,35 @@ def llm_kind(name):
     return "local" if llm_provider_choices().get(name) == "ollama" else "external"
 
 
-LANGUAGES = {   # code -> (label, name used in prompts)
-    "es": ("Español", "neutral Latin American Spanish"), "en": ("English", "English"),
-    "pt": ("Português", "Brazilian Portuguese"), "fr": ("Français", "French"),
-    "it": ("Italiano", "Italian"), "de": ("Deutsch", "German"),
+LANGUAGE_NAMES = {   # ISO 639-1 code -> English name (the storyboard detects the language of the idea)
+    "en": "English", "es": "Spanish", "pt": "Portuguese", "fr": "French", "it": "Italian", "de": "German",
+    "nl": "Dutch", "pl": "Polish", "ru": "Russian", "uk": "Ukrainian", "tr": "Turkish", "ar": "Arabic",
+    "hi": "Hindi", "ja": "Japanese", "ko": "Korean", "zh": "Chinese", "id": "Indonesian", "vi": "Vietnamese",
+    "th": "Thai", "sv": "Swedish", "ca": "Catalan", "ro": "Romanian", "el": "Greek", "he": "Hebrew",
 }
 TONES = {
-    "informativo": "informative and clear", "divertido": "fun and witty", "inspirador": "inspiring and emotional",
-    "dramatico": "dramatic and suspenseful", "misterioso": "mysterious, full of intrigue",
-    "educativo": "educational, step by step", "polemico": "bold and provocative (but factual)",
+    "informative": "informative and clear", "fun": "fun and witty", "inspiring": "inspiring and emotional",
+    "dramatic": "dramatic and suspenseful", "mysterious": "mysterious, full of intrigue",
+    "educational": "educational, step by step", "bold": "bold and provocative (but factual)",
 }
 
 CLIP_TYPES = {
-    "stock": "📦 Stock (gratis)",
-    "own": "📂 Mis clips",
-    "local_ai": "🖥️ IA local (ComfyUI)",
-    "external_ai": "☁️ IA externa (de pago)",
-    "ai_image": "🖼️ Fotos IA con movimiento",
+    "stock": "📦 Stock (free)",
+    "own": "📂 My clips",
+    "local_ai": "🖥️ Local AI (ComfyUI)",
+    "external_ai": "☁️ External AI (paid)",
+    "ai_image": "🖼️ AI photos with motion",
 }
 CLIP_PROVIDERS = {
     "pexels": dict(type="stock", label="Pexels", creds=["pexels"]),
     "pixabay": dict(type="stock", label="Pixabay", creds=["pixabay"]),
     "coverr": dict(type="stock", label="Coverr", creds=["coverr"]),
-    "upload": dict(type="own", label="Archivos que subo aquí"),
-    "footage": dict(type="own", label="Carpeta footage de mi Drive"),
+    "upload": dict(type="own", label="Files I upload here"),
+    "footage": dict(type="own", label="The footage folder of my Drive"),
     # accepts_image: the clip can start from an image made by your image engine (image-to-video).
     "wan22": dict(type="local_ai", label="Wan 2.2 TI2V-5B", services=["comfy"], accepts_image=True),
     "ltxv": dict(type="local_ai", label="LTX-Video 2B", services=["comfy"], accepts_image=True),
-    "gemini_omni": dict(type="external_ai", label="Google Gemini Omni (sucesor de Veo, con audio)", creds=["gemini"],
+    "gemini_omni": dict(type="external_ai", label="Google Gemini Omni (Veo's successor, with sound)", creds=["gemini"],
                         accepts_image=True),
     # Text-to-video services: one paid generation per scene (create task -> poll -> download).
     "wavespeed": dict(type="external_ai", label="WaveSpeed AI", creds=["wavespeed"]),
@@ -701,7 +702,7 @@ CLIP_PROVIDERS = {
     "muapi": dict(type="external_ai", label="MuAPI AI Video", creds=["muapi"]),
     "metaso_minimax": dict(type="external_ai", label="Metaso · MiniMax H3", creds=["metaso_minimax"]),
     "infistar": dict(type="external_ai", label="Infistar AI Video", creds=["infistar"]),
-    "ai_photos": dict(type="ai_image", label="Fotos de tu motor de imagen, con movimiento"),
+    "ai_photos": dict(type="ai_image", label="Pictures from your image engine, with motion"),
 }
 
 MEDIA_VIDEO_EXTS = (".mp4", ".mov", ".m4v", ".webm", ".mkv")
@@ -717,22 +718,23 @@ def footage_files():
 
 
 EDGE_VOICES = [
-    ("México · Jorge (hombre)", "es-MX-JorgeNeural"), ("México · Dalia (mujer)", "es-MX-DaliaNeural"),
-    ("Costa Rica · Juan (hombre)", "es-CR-JuanNeural"), ("Costa Rica · María (mujer)", "es-CR-MariaNeural"),
-    ("España · Álvaro (hombre)", "es-ES-AlvaroNeural"), ("España · Elvira (mujer)", "es-ES-ElviraNeural"),
-    ("EE. UU. · Alonso (hombre)", "es-US-AlonsoNeural"), ("EE. UU. · Paloma (mujer)", "es-US-PalomaNeural"),
-    ("English · Andrew (man)", "en-US-AndrewNeural"), ("English · Ava (woman)", "en-US-AvaNeural"),
-    ("Português · Antonio (homem)", "pt-BR-AntonioNeural"), ("Português · Francisca (mulher)", "pt-BR-FranciscaNeural"),
+    ("Spanish · Mexico · Jorge (male)", "es-MX-JorgeNeural"), ("Spanish · Mexico · Dalia (female)", "es-MX-DaliaNeural"),
+    ("Spanish · Costa Rica · Juan (male)", "es-CR-JuanNeural"), ("Spanish · Costa Rica · María (female)", "es-CR-MariaNeural"),
+    ("Spanish · Spain · Álvaro (male)", "es-ES-AlvaroNeural"), ("Spanish · Spain · Elvira (female)", "es-ES-ElviraNeural"),
+    ("Spanish · US · Alonso (male)", "es-US-AlonsoNeural"), ("Spanish · US · Paloma (female)", "es-US-PalomaNeural"),
+    ("English · US · Andrew (male)", "en-US-AndrewNeural"), ("English · US · Ava (female)", "en-US-AvaNeural"),
+    ("Portuguese · Brazil · Antonio (male)", "pt-BR-AntonioNeural"),
+    ("Portuguese · Brazil · Francisca (female)", "pt-BR-FranciscaNeural"),
 ]
 AZURE_VOICES = [(label, value) for label, value in EDGE_VOICES] + [
-    ("Multilingüe · Andrew", "en-US-AndrewMultilingualNeural"), ("Multilingüe · Ava", "en-US-AvaMultilingualNeural"),
+    ("Multilingual · Andrew", "en-US-AndrewMultilingualNeural"), ("Multilingual · Ava", "en-US-AvaMultilingualNeural"),
 ]
-VOICE_TYPES = {"local": "🆓 Local / gratis", "external": "☁️ API externa"}
+VOICE_TYPES = {"local": "🆓 Local / free", "external": "☁️ External API"}
 # voices: (label, value). voice_from: a default voice read from the keys file.
 VOICE_PROVIDERS = {
     "edge": dict(type="local", label="Edge-TTS", voices=EDGE_VOICES),
-    "f5": dict(type="local", label="F5-TTS (clona tu voz)", services=["f5"],
-               voices=[("Muestra subida o la primera de Drive/voices", "sample")]),
+    "f5": dict(type="local", label="F5-TTS (clones your voice)", services=["f5"],
+               voices=[("Uploaded sample, or the first one in Drive/voices", "sample")]),
     "elevenlabs": dict(type="external", label="ElevenLabs", creds=["elevenlabs"],
                        voices=[], voice_from=("elevenlabs", "voice_id")),
     "openai_tts": dict(type="external", label="OpenAI TTS", creds=["openai"],
@@ -745,12 +747,12 @@ VOICE_PROVIDERS = {
                            ("Fenrir", "Excitable"), ("Leda", "Youthful"), ("Orus", "Firm"), ("Aoede", "Breezy"))]),
     "siliconflow": dict(type="external", label="SiliconFlow TTS", creds=["siliconflow"],
                         voices=[(f"{v.capitalize()} ({g})", f"FunAudioLLM/CosyVoice2-0.5B:{v}") for v, g in (
-                            ("alex", "hombre"), ("benjamin", "hombre"), ("charles", "hombre"), ("david", "hombre"),
-                            ("anna", "mujer"), ("bella", "mujer"), ("claire", "mujer"), ("diana", "mujer"))]),
+                            ("alex", "male"), ("benjamin", "male"), ("charles", "male"), ("david", "male"),
+                            ("anna", "female"), ("bella", "female"), ("claire", "female"), ("diana", "female"))]),
     "mimo": dict(type="external", label="Xiaomi MiMo TTS", creds=["mimo"],
                  voices=[(f"{v} ({g})", v) for v, g in (
-                     ("Milo", "hombre"), ("Dean", "hombre"), ("Mia", "mujer"), ("Chloe", "mujer"),
-                     ("mimo_default", "mujer"))]),
+                     ("Milo", "male"), ("Dean", "male"), ("Mia", "female"), ("Chloe", "female"),
+                     ("mimo_default", "female"))]),
     "minimax": dict(type="external", label="MiniMax TTS", creds=["minimax"],
                     voices=[], voice_from=("minimax", "voice_id")),
     "fish_audio": dict(type="external", label="Fish Audio TTS", creds=["fish_audio"], voice_from=("fish_audio", "voice_id"),
@@ -762,18 +764,22 @@ VOICE_PROVIDERS = {
 IMAGE_PROVIDERS = {   # the image engine: cover, first frame of each clip and AI photos all use the same one
     "flux": dict(label="FLUX (local)", kind="local", services=["forge"]),
     "nano_banana": dict(label="Nano Banana (Google Gemini)", kind="external", creds=["gemini"]),
-    "image_api": dict(label="API compatible con OpenAI (externa)", kind="external", creds=["image_api"]),
+    "image_api": dict(label="OpenAI-compatible API (external)", kind="external", creds=["image_api"]),
 }
-STYLES = {   # how the reel looks and is told; the LLM adapts script, images and motion to it
-    "auto": "✨ Automático", "narrated": "🎥 Narrado con imágenes", "animated": "🧸 Animado (3D tipo Pixar)",
-    "cartoon": "🖍️ Caricatura 2D", "talking_objects": "🗣️ Objetos que hablan", "listicle": "🔢 Top / datos curiosos",
-    "story": "📖 Historia (storytime)", "pov": "👀 POV", "tutorial": "🛠️ Tutorial paso a paso",
-    "motivational": "🔥 Motivacional", "cinematic": "🎬 Cinemático realista",
+STYLES = {   # how the reel looks and is told; the LLM adapts the storyboard, images and motion to it
+    "auto": "✨ Automatic", "narrated": "🎥 Narrated with images", "animated": "🧸 Animated (Pixar-like 3D)",
+    "cartoon": "🖍️ 2D cartoon", "talking_objects": "🗣️ Talking objects", "listicle": "🔢 Top list / fun facts",
+    "story": "📖 Story (storytime)", "pov": "👀 POV", "tutorial": "🛠️ Step-by-step tutorial",
+    "motivational": "🔥 Motivational", "cinematic": "🎬 Cinematic realism",
 }
 MUSIC_SOURCES = {
-    "none": dict(label="Sin música"),
-    "library": dict(label="Mis canciones (Drive/music)"),
-    "elevenlabs": dict(label="IA · ElevenLabs Music (de pago)", creds=["elevenlabs"]),
+    "none": dict(label="No music"),
+    "library": dict(label="My songs (Drive/music)"),
+    "elevenlabs": dict(label="AI · ElevenLabs Music (paid)", creds=["elevenlabs"]),
+}
+SCENE_SOUNDS = {   # the «Sound» line of every scene
+    "none": dict(label="Off (only the clip's own sound, when it has one)"),
+    "elevenlabs": dict(label="ElevenLabs sound effects, one per scene (paid)", creds=["elevenlabs"]),
 }
 
 
@@ -792,7 +798,7 @@ def voice_choices(provider):
     if p.get("voice_from"):
         voice_id = get_key(*p["voice_from"])
         if voice_id and voice_id not in [v for _, v in choices]:
-            choices.insert(0, (f"{voice_id} (de tus claves)", voice_id))
+            choices.insert(0, (f"{voice_id} (from your keys)", voice_id))
     return choices
 
 
@@ -807,11 +813,11 @@ def music_files():
 
 
 def check_selection(llm_key, clip_provider, voice_provider, image_provider, music_source, confirm_paid=False,
-                    own_clips=0, make_cover=True, use_keyframes=True):
+                    own_clips=0, make_cover=True, use_keyframes=True, scene_sound="none"):
     """Everything a run needs, checked up front. Returns (errors, warnings); errors block the run.
     No provider depends on another: each one only needs its own key or its own tool running.
     image_provider: the image engine, used for the cover, the first frame of clips that accept one and AI photos.
-    own_clips: how many files were uploaded for the "upload" clip source."""
+    own_clips: how many files were uploaded for the "upload" clip source. scene_sound: SCENE_SOUNDS key."""
     errors, warnings = [], []
     needed_services, needed_creds = set(), {}
 
@@ -828,59 +834,60 @@ def check_selection(llm_key, clip_provider, voice_provider, image_provider, musi
     elif llm_key.startswith("compat:"):
         name = llm_key.split(":", 1)[1]
         if not get_compat(name, "api_key"):
-            errors.append(f"Falta la API key de <b>{name}</b> (servicio compatible con OpenAI) para el guion.")
+            errors.append(f"The API key of <b>{name}</b> (OpenAI-compatible service) is missing for the storyboard.")
         if not get_compat(name, "base_url"):
-            errors.append(f"Falta la Base URL de <b>{name}</b>.")
+            errors.append(f"The Base URL of <b>{name}</b> is missing.")
     else:
-        need({"creds": [llm_key]}, "el guion")
+        need({"creds": [llm_key]}, "the storyboard")
 
     # Clips
     clip = CLIP_PROVIDERS[clip_provider]
-    need(clip, f"los clips ({clip['label']})")
+    need(clip, f"the clips ({clip['label']})")
     if clip["type"] == "external_ai":
         if confirm_paid:
-            warnings.append(f"{clip['label']} cobra por cada clip generado (uno por escena).")
+            warnings.append(f"{clip['label']} charges for every clip it makes (one per scene, and every regeneration).")
         else:
-            errors.append(f"{clip['label']} cobra por cada clip: marca «Confirmo el cobro» para continuar.")
+            errors.append(f"{clip['label']} charges for every clip: tick «I accept the charge» to continue.")
     if clip.get("accepts_image") and not use_keyframes and clip["type"] == "local_ai":
-        warnings.append(f"Sin imagen base: {clip['label']} generará cada clip solo desde el texto (texto a video).")
+        warnings.append(f"Without a first frame, {clip['label']} makes every clip from the text alone (text-to-video).")
     if clip_provider == "upload" and not own_clips:
-        errors.append("Sube al menos un clip o foto en «Mis clips».")
+        errors.append("Upload at least one clip or photo in «My clips».")
     if clip_provider == "footage" and not footage_files():
-        errors.append(f"La carpeta <b>footage</b> de tu Drive está vacía: copia tus clips o fotos en {FOOTAGE_DIR}.")
+        errors.append(f"The <b>footage</b> folder of your Drive is empty: copy your clips or photos to {FOOTAGE_DIR}.")
 
     # Image engine: only when something actually uses it
-    uses = [what for what, used in (("la portada", make_cover),
-                                     ("la imagen base de cada clip", clip.get("accepts_image") and use_keyframes),
-                                     ("las fotos de los clips", clip["type"] == "ai_image")) if used]
+    uses = [what for what, used in (("the cover", make_cover),
+                                     ("the first frame of each clip", clip.get("accepts_image") and use_keyframes),
+                                     ("the pictures of the clips", clip["type"] == "ai_image")) if used]
     if uses:
-        need(IMAGE_PROVIDERS[image_provider], " y ".join(uses))
+        need(IMAGE_PROVIDERS[image_provider], " and ".join(uses))
 
-    # Voice
+    # Voice, sound effects and music
     voice = VOICE_PROVIDERS[voice_provider]
-    need(voice, f"la voz ({voice['label']})")
-
-    # Music
-    need(MUSIC_SOURCES[music_source], "la música IA")
+    need(voice, f"the voice ({voice['label']})")
+    need(SCENE_SOUNDS.get(scene_sound, {}), "the sound effects")
+    if scene_sound == "elevenlabs":
+        warnings.append("ElevenLabs charges for every sound effect (one per scene that has a «Sound» line).")
+    need(MUSIC_SOURCES[music_source], "the AI music")
     if music_source == "library" and not music_files():
-        warnings.append(f"No hay canciones en {MUSIC_DIR}: sube tus MP3 ahí o elige música IA. "
-                        "El reel saldrá sin música.")
+        warnings.append(f"There are no songs in {MUSIC_DIR}: upload your MP3s there or pick AI music. "
+                        "The reel will have no music.")
     if music_source == "elevenlabs":
-        warnings.append("ElevenLabs Music cobra por canción y requiere un plan de pago; "
-                        "la canción queda en Drive/music/ai para reutilizarla gratis.")
+        warnings.append("ElevenLabs Music charges per song and needs a paid plan; "
+                        "the song stays in Drive/music/ai to be reused for free.")
 
     for section, uses in needed_creds.items():
         missing = credential_missing(section)
         if missing:
             fields = ", ".join(FIELD_LABELS.get(f, f) for f in missing)
-            what = ", ".join(uses[:-1]) + " y " + uses[-1] if len(uses) > 1 else uses[0]
-            errors.append(f"Falta {fields} de <b>{CREDENTIALS[section]['label']}</b> para {what}. "
-                          f"Agrégala en la pestaña 🔑 Claves API.")
+            what = ", ".join(uses[:-1]) + " and " + uses[-1] if len(uses) > 1 else uses[0]
+            errors.append(f"<b>{CREDENTIALS[section]['label']}</b> is missing its {fields} for {what}. "
+                          f"Add it in the 🔑 API keys tab.")
     for name in sorted(needed_services):
         if not service_ready(name):
             svc = SERVICES[name]
-            verb = "no está instalado" if name == "f5" else "no está corriendo"
-            errors.append(f"<b>{svc['label']}</b> {verb}: ejecuta la {svc['cell']}.")
+            state = "is not installed" if name == "f5" else "is not running"
+            errors.append(f"<b>{svc['label']}</b> {state}: run {svc['cell']}.")
     return errors, warnings
 
 
@@ -901,7 +908,7 @@ def _convert_audio(data, output_path, input_args=()):
                         output_path], capture_output=True, text=True)
     os.remove(source)
     if r.returncode != 0 or not os.path.exists(output_path):
-        raise RuntimeError("ffmpeg no pudo convertir el audio: " + r.stderr[-300:])
+        raise RuntimeError("ffmpeg could not convert the audio: " + r.stderr[-300:])
     return output_path
 
 
@@ -927,7 +934,7 @@ def _edge_tts(text, voice, output_path):
 def _elevenlabs_tts(text, voice, output_path):
     voice_id = voice or get_key("elevenlabs", "voice_id")
     if not voice_id:
-        raise RuntimeError("Escribe un Voice ID de ElevenLabs (o guárdalo en la pestaña 🔑 Claves API).")
+        raise RuntimeError("Write an ElevenLabs voice ID (or save one in the 🔑 API keys tab).")
     r = requests.post(f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}", timeout=300,
                       params={"output_format": "mp3_44100_128"},
                       headers={"xi-api-key": get_key("elevenlabs", "api_key")},
@@ -977,7 +984,7 @@ def _gemini_tts(text, voice, output_path):
     inline = next((p.get("inlineData") or p.get("inline_data") for p in parts
                    if p.get("inlineData") or p.get("inline_data")), None)
     if not inline:
-        raise RuntimeError("Gemini no devolvió audio.")
+        raise RuntimeError("Gemini returned no audio.")
     rate = re.search(r"rate=(\d+)", inline.get("mimeType") or inline.get("mime_type") or "")
     return _convert_audio(base64.b64decode(inline["data"]), output_path,
                           ["-f", "s16le", "-ar", rate.group(1) if rate else "24000", "-ac", "1"])
@@ -1007,14 +1014,14 @@ def _mimo_tts(text, voice, output_path):
     r.raise_for_status()
     audio = (r.json()["choices"][0]["message"].get("audio") or {}).get("data")
     if not audio:
-        raise RuntimeError("MiMo no devolvió audio.")
+        raise RuntimeError("MiMo returned no audio.")
     return _convert_audio(base64.b64decode(audio), output_path)
 
 
 def _minimax_tts(text, voice, output_path):
     voice_id = voice or get_key("minimax", "voice_id")
     if not voice_id:
-        raise RuntimeError("Escribe un Voice ID de MiniMax (o guárdalo en la pestaña 🔑 Claves API).")
+        raise RuntimeError("Write a MiniMax voice ID (or save one in the 🔑 API keys tab).")
     r = requests.post(get_key("minimax", "base_url", "https://api.minimax.io/v1/t2a_v2"), timeout=300,
                       headers={"Authorization": f"Bearer {get_key('minimax', 'api_key')}"},
                       json={"model": get_key("minimax", "model", "speech-2.8-hd"), "text": text, "stream": False,
@@ -1028,7 +1035,7 @@ def _minimax_tts(text, voice, output_path):
         raise RuntimeError(f"MiniMax: {base.get('status_msg') or body}")
     audio = (body.get("data") or {}).get("audio")
     if not audio:
-        raise RuntimeError("MiniMax no devolvió audio.")
+        raise RuntimeError("MiniMax returned no audio.")
     return _save_bytes(bytes.fromhex(audio), output_path)
 
 
@@ -1070,18 +1077,18 @@ def _voxcpm_tts(text, voice, output_path):
             elif event.get("error"):
                 raise RuntimeError(f"VoxCPM: {event['error']}")
     if not chunks or not done:
-        raise RuntimeError("VoxCPM cortó el audio antes de terminar.")
+        raise RuntimeError("VoxCPM cut the audio before it finished.")
     return _convert_audio(b"".join(chunks), output_path)
 
 
 def _f5_tts(text, ref_audio, ref_text, output_path):
     cli = f"{F5_VENV_DIR}/bin/f5-tts_infer-cli"
     if not os.path.exists(cli):
-        raise RuntimeError("F5-TTS no está instalado: ejecuta la Celda 6 (Estudio de voz).")
+        raise RuntimeError("F5-TTS is not installed: run Cell 6 (Voice studio).")
     if not ref_audio or not os.path.exists(ref_audio):
         samples = sorted(os.path.join(VOICES_DIR, f) for f in os.listdir(VOICES_DIR) if f.endswith((".wav", ".mp3")))
         if not samples:
-            raise RuntimeError(f"Sube una muestra de 5-10 s o guarda una en {VOICES_DIR}")
+            raise RuntimeError(f"Upload a 5-10 s sample or save one in {VOICES_DIR}")
         ref_audio = samples[0]
     wav_path = os.path.splitext(output_path)[0] + ".wav"
     cmd = [cli, "--ref_audio", ref_audio, "--gen_text", text,
@@ -1090,7 +1097,7 @@ def _f5_tts(text, ref_audio, ref_text, output_path):
         cmd += ["--ref_text", ref_text.strip()]
     r = subprocess.run(cmd, capture_output=True, text=True, env=venv_env(F5_VENV_DIR))
     if r.returncode != 0 or not os.path.exists(wav_path):
-        raise RuntimeError("F5-TTS falló:\n" + (r.stderr or r.stdout)[-1500:])
+        raise RuntimeError("F5-TTS failed:\n" + (r.stderr or r.stdout)[-1500:])
     return wav_path
 
 
@@ -1108,15 +1115,15 @@ def synthesize_voice(text, provider, voice, ref_audio=None, ref_text="", output_
     label = VOICE_PROVIDERS[provider]["label"]
     try:
         if provider == "f5":
-            return _f5_tts(text, ref_audio, ref_text, output_path), f"Voz clonada con {label}."
+            return _f5_tts(text, ref_audio, ref_text, output_path), f"Voice cloned with {label}."
         path = VOICE_ENGINES[provider](text, (voice or "").strip(), output_path)
         if not os.path.exists(path) or os.path.getsize(path) < 1000:
-            return None, f"{label} devolvió un audio vacío."
-        return path, f"Voz generada con {label}."
+            return None, f"{label} returned an empty audio."
+        return path, f"Voice made with {label}."
     except requests.HTTPError as exc:
-        return None, f"{label} rechazó la petición: HTTP {exc.response.status_code} {exc.response.text[:300]}"
+        return None, f"{label} rejected the request: HTTP {exc.response.status_code} {exc.response.text[:300]}"
     except Exception as exc:
-        return None, f"{label} falló: {exc}"
+        return None, f"{label} failed: {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -1135,16 +1142,16 @@ def _probe(url, headers=None, params=None):
         return None, str(exc)[:200]
 
 
-def _verdict(code, text, ok_message="Conexión correcta: la clave funciona."):
+def _verdict(code, text, ok_message="Connected: the key works."):
     if code is None:
-        return None, f"Sin conexión con el servicio: {text}"
+        return None, f"Could not reach the service: {text}"
     if 200 <= code < 300:
         return True, ok_message
     if code in (401, 403) or (code == 400 and "key" in text.lower()):
-        return False, f"Clave rechazada (HTTP {code}). Revisa que esté completa y activa."
+        return False, f"Key rejected (HTTP {code}). Check that it is complete and active."
     if code == 429:
-        return None, "El servicio respondió «demasiadas peticiones» (HTTP 429): la clave existe, reintenta en un rato."
-    return None, f"No se pudo verificar: el servicio respondió HTTP {code}."
+        return None, "The service answered «too many requests» (HTTP 429): the key exists, try again later."
+    return None, f"Could not verify: the service answered HTTP {code}."
 
 
 def _probe_auth_sensitive(url, make_headers, key):
@@ -1153,10 +1160,10 @@ def _probe_auth_sensitive(url, make_headers, key):
         return _verdict(code, text)
     bogus_code, _ = _probe(url, make_headers(_BOGUS_KEY))
     if 200 <= (code or 0) < 300 and bogus_code in (401, 403):
-        return True, "Conexión correcta: la clave funciona."
+        return True, "Connected: the key works."
     if 200 <= (code or 0) < 300:
-        return None, "El servicio responde, pero ese endpoint no exige clave: no se puede confirmar sin generar (con costo)."
-    return None, f"No se pudo verificar sin generar contenido (HTTP {code}). La clave queda guardada."
+        return None, "The service answers, but that endpoint needs no key: it cannot be confirmed without generating (at a cost)."
+    return None, f"Could not verify without generating content (HTTP {code}). The key stays saved."
 
 
 def _bearer(key):
@@ -1168,7 +1175,7 @@ def test_credential(section, values):
     v = {k: (values.get(k) or "").strip() for k in CREDENTIALS[section]["fields"]}
     missing = [FIELD_LABELS.get(f, f) for f in CREDENTIALS[section]["required"] if not v.get(f)]
     if missing:
-        return False, "Falta: " + ", ".join(missing)
+        return False, "Missing: " + ", ".join(missing)
     key = v.get("api_key") or v.get("speech_key") or v.get("token")
 
     if section == "openai":
@@ -1190,7 +1197,7 @@ def test_credential(section, values):
     if section == "elevenlabs":
         code, text = _probe("https://api.elevenlabs.io/v1/user/subscription", {"xi-api-key": key})
         if code == 401 and "missing_permissions" in text:
-            return True, "La clave es válida (sin permiso para ver la suscripción, pero sí puede generar si lo tiene)."
+            return True, "The key is valid (it cannot see the subscription, but it can generate if it has that permission)."
         return _verdict(code, text)
     if section == "azure":
         return _verdict(*_probe(f"https://{v['speech_region']}.tts.speech.microsoft.com/cognitiveservices/voices/list",
@@ -1216,10 +1223,10 @@ def test_credential(section, values):
     if section in endpoints:
         url, make_headers = endpoints[section]
         return _probe_auth_sensitive(url, make_headers, key)
-    return None, "Este proveedor no tiene prueba de conexión."
+    return None, "This provider has no connection test."
 
 
 def test_compat(base_url, api_key):
     if not base_url.strip() or not api_key.strip():
-        return False, "Falta: " + ", ".join(n for n, x in (("Base URL", base_url), ("API key", api_key)) if not x.strip())
+        return False, "Missing: " + ", ".join(n for n, x in (("Base URL", base_url), ("API key", api_key)) if not x.strip())
     return _verdict(*_probe(f"{base_url.strip().rstrip('/')}/models", _bearer(api_key.strip())))

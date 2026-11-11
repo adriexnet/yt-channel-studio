@@ -1,15 +1,19 @@
 """The real Gradio 6 interfaces: built from the package, handlers exercised, and opened in Chromium."""
-import json, os, time
+import json, os, shutil, time
 import pytest
 import studio.lib as L
 import studio.pipeline as P
 from studio import control_center as CC, jobs
 from studio.tools import audio
+from helpers import ffmpeg
 
-FORM = ["idea_in", "language_dd", "duration_sl", "style_rd", "tone_dd", "instructions_in", "scenes_dd", "llm_dd",
-        "model_dd", "image_rd", "cover_cb", "keyframes_cb", "clip_type_rd", "clip_dd", "paid_cb", "own_files_in",
-        "voice_type_rd", "voice_provider_dd", "voice_dd", "clone_in", "music_rd", "kit_cb", "ai_w", "ai_h", "ai_f",
-        "ai_s"]
+FORM = ["idea_in", "duration_sl", "style_rd", "tone_dd", "instructions_in", "scenes_dd", "llm_dd", "model_dd",
+        "image_rd", "cover_cb", "keyframes_cb", "clip_type_rd", "clip_dd", "paid_cb", "own_files_in",
+        "voice_type_rd", "voice_provider_dd", "voice_dd", "clone_in", "sound_rd", "music_rd", "kit_cb", "review_cb",
+        "ai_w", "ai_h", "ai_f", "ai_s"]
+OUT = {name: i for i, name in enumerate(
+    ["progress", "step", "storyboard", "gallery", "video", "variants"] + [f"kit{i}" for i in range(7)] +
+    ["tech", "reel", "review", "panel", "title", "storyboard_box", "storyboard_text", "items_box"])}
 
 
 @pytest.fixture(scope="module")
@@ -33,12 +37,13 @@ def form_values(c, **changes):
 
 def test_layout(ui):
     blocks, c = ui
-    assert len(blocks.blocks) > 150
-    assert [CC.PRODUCE_KEYS[i] for i in range(len(FORM))] == CC.PRODUCE_KEYS
+    assert len(blocks.blocks) > 150 and len(FORM) == len(CC.PRODUCE_KEYS) and len(OUT) == CC.OUTPUT_COUNT
     assert len(CC.KEY_COMPONENTS) == sum(len(cred["fields"]) for cred in L.CREDENTIALS.values())
     assert len(c["montage_inputs"]) == len(CC.MONTAGE_KEYS) == len(c["reel_montage_inputs"])
     assert c["montage_inputs"][0] is c["aspect_rd"]           # the format picker IS the montage format
     assert "Anton" in CC.FONTS and c["prefs"]["montage"]["font"] == "Anton"
+    assert c["review_cb"].value is True and c["sound_rd"].value == "none" and c["ai_f"].value == 121
+    assert c["review_panel"].visible is False
     for window in ("llm_modal", "image_modal", "voice_modal", "video_modal", "format_modal", "duration_modal",
                    "style_modal", "settings_modal"):
         assert c[window].visible is False                     # every window starts closed
@@ -48,8 +53,8 @@ def test_chips_summarize_the_choices():
     labels = CC.chip_labels("Google Gemini", "gemini-3.8-flash", "nano_banana", "azure", "es-ES-ElviraNeural",
                             "gemini_omni", "9:16", 45, "talking_objects")
     assert labels[0] == "🧠 Google Gemini · gemini-3.8-flash" and labels[1].startswith("🖼️ Nano Banana")
-    assert "Elvira" in labels[2] and labels[3].startswith("🎞️ Google Gemini Omni")
-    assert labels[4:] == ["📐 9:16", "⏱️ 45 s", "🎭 Objetos que hablan"]
+    assert labels[2] == "🎙️ Azure Speech · Elvira (female)" and labels[3].startswith("🎞️ Google Gemini Omni")
+    assert labels[4:] == ["📐 9:16", "⏱️ 45 s", "🎭 Talking objects"]
     assert CC.chip_labels("OpenAI (ChatGPT)", "", "flux", "edge", "es-MX-JorgeNeural", "pexels", "1:1", 30,
                           "auto")[0] == "🧠 OpenAI"
 
@@ -57,9 +62,9 @@ def test_chips_summarize_the_choices():
 def test_current_step_line():
     log = "[00:01] Checking...\n[01:40] Scene 5: image with FLUX (local)..."
     assert CC.current_step(log) == "[01:40] Scene 5: image with FLUX (local)..."
-    failed = log + "\n[02:00] ❌ open() got an unexpected keyword argument\n[02:00] TypeError (detalle completo en el log técnico)"
+    failed = log + "\n[02:00] ❌ open() got an unexpected keyword argument\n[02:00] TypeError (full detail in the technical log)"
     line = CC.current_step(failed, failed=True)
-    assert "❌ open() got an unexpected keyword argument" in line and "Reanudar" in line and "TypeError" not in line
+    assert "❌ open() got an unexpected keyword argument" in line and "Resume" in line and "TypeError" not in line
 
 
 def test_contextual_options():
@@ -79,13 +84,13 @@ def test_contextual_options():
 
 
 def test_status_box(keys):
-    html = CC.validate("OpenAI (ChatGPT)", "pexels", "edge", "flux", "library", False, None, True, True)
+    html = CC.validate("OpenAI (ChatGPT)", "pexels", "edge", "flux", "library", False, None, True, True, "none")
     assert "⛔" in html and "OpenAI" in html and "Pexels" in html and "Forge" in html
     keys("openai", api_key="sk")
     keys("pexels", api_key="px")
-    assert "✅ Todo listo" in CC.validate("OpenAI (ChatGPT)", "pexels", "edge", "flux", "none", False, None, False, True)
-    assert "✅ Todo listo" in CC.validate("OpenAI (ChatGPT)", "upload", "edge", "flux", "none", False, ["/a.mp4"],
-                                         False, True)
+    assert "✅ Ready" in CC.validate("OpenAI (ChatGPT)", "pexels", "edge", "flux", "none", False, None, False, True, "none")
+    html = CC.validate("OpenAI (ChatGPT)", "pexels", "edge", "flux", "none", False, None, False, True, "elevenlabs")
+    assert "ElevenLabs" in html and "the sound effects" in html
 
 
 def test_save_keys_writes_only_edited_fields(ui, keys):
@@ -93,7 +98,7 @@ def test_save_keys_writes_only_edited_fields(ui, keys):
     CC.KEY_SHOWN.update({(s, f): L.get_key(s, f) for s, f, _ in CC.KEY_COMPONENTS})
     values = ["NEW" if (s, f) == ("upload_post", "username") else L.get_key(s, f) for s, f, _ in CC.KEY_COMPONENTS]
     message = CC.save_all_keys(*values)
-    assert "1 campo" in message and L.get_key("upload_post", "username") == "NEW" and L.get_key("openai", "api_key") == "sk"
+    assert "1 field" in message and L.get_key("upload_post", "username") == "NEW" and L.get_key("openai", "api_key") == "sk"
 
 
 KIT = P.normalize_kit({"virality": {"overall": 80}, "on_screen_hooks": ["h"], "youtube": {"title": "Título"},
@@ -102,8 +107,8 @@ KIT = P.normalize_kit({"virality": {"overall": 80}, "on_screen_hooks": ["h"], "y
 
 
 def snapshot(**changes):
-    base = {"log": "[00:01] a", "stage": "Guion", "pct": 10, "script": "S", "media": [], "video": None, "videos": [],
-            "failed": False, "done": False, "kit": None, "tech": "", "reel_dir": None}
+    base = {"log": "[00:01] a", "stage": "Storyboard", "pct": 10, "script": "S", "media": [], "video": None,
+            "videos": [], "failed": False, "done": False, "kit": None, "tech": "", "reel_dir": None, "review": None}
     base.update(changes)
     return base
 
@@ -115,33 +120,73 @@ def test_production_wrapper(ui, monkeypatch):
     def fake_produce(settings, resume_dir=None):
         seen.update(settings)
         yield snapshot()
-        yield snapshot(stage="Listo", pct=100, done=True, kit=KIT, tech="TECH", video="/v.mp4",
+        yield snapshot(stage="Done", pct=100, done=True, kit=KIT, tech="TECH", video="/v.mp4",
                        videos=["/v.mp4", "/v2.mp4"], reel_dir="/reels/x", log="[00:01] a\n[00:09] DONE.")
     monkeypatch.setattr(CC, "produce_reel", fake_produce)
     monkeypatch.setattr(CC, "drive_responds", lambda timeout=10: True)
-    values = form_values(c, idea="Idea", style="animated")
+    values = form_values(c, idea="Idea", style="animated", scene_sound="elevenlabs")
     values[-1] = 2                                                # variants
     outputs = list(CC.produce_ui(*values))
-    assert "Iniciando" in outputs[0][0] and all(len(o) == 15 for o in outputs)
+    assert "Starting" in outputs[0][0] and all(len(o) == CC.OUTPUT_COUNT for o in outputs)
     assert not jobs.current().running
     assert seen["style"] == "animated" and seen["num_scenes"] == "auto" and seen["tone"] == "auto"
     assert seen["make_cover"] is True and seen["make_kit"] is True and seen["image_provider"] == "flux"
+    assert seen["review_steps"] is True and seen["scene_sound"] == "elevenlabs" and "language" not in seen
     assert seen["montage"]["variants"] == 2 and seen["montage"]["font"] == "Anton" and seen["duration"] == 35
-    assert "DONE." in outputs[-1][1] and outputs[-1][5] == ["/v.mp4", "/v2.mp4"]
-    assert outputs[-1][13] == "TECH" and outputs[-1][14] == "/reels/x"
-    assert outputs[-1][6]["value"] == "Título" and "(6/100)" in outputs[-1][6]["label"]
+    last = outputs[-1]
+    assert "DONE." in last[OUT["step"]] and last[OUT["variants"]] == ["/v.mp4", "/v2.mp4"]
+    assert last[OUT["tech"]] == "TECH" and last[OUT["reel"]] == "/reels/x"
+    assert last[OUT["kit0"]]["value"] == "Título" and "(6/100)" in last[OUT["kit0"]]["label"]
+    assert last[OUT["panel"]]["visible"] is False
     prefs = json.load(open(CC.PREFS_FILE))
-    assert prefs["montage"]["variants"] == 2 and prefs["style"] == "animated"
+    assert prefs["montage"]["variants"] == 2 and prefs["style"] == "animated" and prefs["scene_sound"] == "elevenlabs"
 
 
-@pytest.fixture
-def saved_reel():
-    folder = f"{L.REELS_DIR}/demo"
-    os.makedirs(folder, exist_ok=True)
-    open(f"{folder}/demo_FINAL.mp4", "wb").write(b"x")
-    open(f"{folder}/script.txt", "w").write("guion demo")
-    P.save_publish_kit(KIT, folder)
-    return folder
+STORYBOARD_REVIEW = {"reel_dir": "/reels/x", "stage": "storyboard", "storyboard": "Title: T\n\n## Scene 1: A\nVisual: v",
+                     "items": []}
+AUDIO_REVIEW = {"reel_dir": "/reels/x", "stage": "audio", "storyboard": "...",
+                "items": [{"id": "scene1_audio", "label": "Scene 1 · voice · 6.3 s", "kind": "audio", "path": None,
+                           "text": "Hola", "text_label": "Narration"}]}
+
+
+def test_the_review_panel_follows_the_step(monkeypatch):
+    shown = {}
+    out = CC.snapshot_outputs(snapshot(review=STORYBOARD_REVIEW, stage="Review the storyboard"), shown)
+    assert "👀" in out[OUT["progress"]] and out[OUT["review"]] == STORYBOARD_REVIEW
+    assert out[OUT["panel"]]["visible"] and out[OUT["storyboard_box"]]["visible"]
+    assert out[OUT["storyboard_text"]]["value"].startswith("Title: T") and not out[OUT["items_box"]]["visible"]
+    assert "Review the storyboard" in out[OUT["title"]]["value"]
+    again = CC.snapshot_outputs(snapshot(review=STORYBOARD_REVIEW), shown)
+    assert again[OUT["storyboard_text"]] == {"__type__": "update"}        # what you are editing is not overwritten
+    out = CC.snapshot_outputs(snapshot(review=AUDIO_REVIEW), shown)
+    assert out[OUT["items_box"]]["visible"] and not out[OUT["storyboard_box"]]["visible"]
+    out = CC.snapshot_outputs(snapshot(), shown)
+    assert out[OUT["review"]] is None and out[OUT["panel"]]["visible"] is False
+
+    calls = []
+
+    def fake_continue(reel_dir, edited=None):
+        calls.append(("continue", reel_dir, edited))
+        yield snapshot(stage="Done", done=True, pct=100, reel_dir=reel_dir)
+
+    def fake_item(reel_dir, item_id, text=None):
+        calls.append(("item", reel_dir, item_id, text))
+        yield snapshot(review=AUDIO_REVIEW, reel_dir=reel_dir)
+
+    def fake_storyboard(reel_dir, notes="", edited=""):
+        calls.append(("storyboard", reel_dir, notes, edited))
+        yield snapshot(review=STORYBOARD_REVIEW, reel_dir=reel_dir)
+    monkeypatch.setattr(CC, "continue_reel", fake_continue)
+    monkeypatch.setattr(CC, "regenerate_item", fake_item)
+    monkeypatch.setattr(CC, "regenerate_storyboard", fake_storyboard)
+    reel = L.REELS_DIR
+    list(CC.confirm_ui(reel, "Title: edited"))
+    list(CC.regenerate_item_ui(reel, "scene1_audio", "Hola de nuevo"))
+    list(CC.regenerate_storyboard_ui(reel, "más humor", "Title: T"))
+    list(CC.confirm_ui(reel))
+    assert calls == [("continue", reel, "Title: edited"), ("item", reel, "scene1_audio", "Hola de nuevo"),
+                     ("storyboard", reel, "más humor", "Title: T"), ("continue", reel, None)]
+    assert "no reel waiting" in list(CC.confirm_ui(None))[-1][0]
 
 
 def test_publish_wrapper_uses_edited_fields(saved_reel, monkeypatch):
@@ -159,53 +204,83 @@ def test_publish_wrapper_uses_edited_fields(saved_reel, monkeypatch):
                                "Título editado", "D", "t", "TikTok editado", "ig", "fb"))
     assert sent["kit"]["tiktok"]["caption"] == "TikTok editado" and sent["kit"]["youtube"]["title"] == "Título editado"
     assert sent["video"].endswith("demo_FINAL.mp4")
-    assert "Subiendo" in steps[0] and "✅" in steps[-1] and "https://t/1" in steps[-1]
+    assert "Uploading" in steps[0] and "✅" in steps[-1] and "https://t/1" in steps[-1]
+
+
+PLAN = {"language": "es", "language_name": "Spanish", "title": "Demo", "on_screen_text": "",
+        "scenes": [{"id": 1, "title": "Uno", "visual": "Un perro", "narration": "Hola perro", "sound": "",
+                    "duration": 3.0, "image_prompt": "a dog", "motion_prompt": "pan", "search_query": "dog",
+                    "sound_prompt": ""}]}
+
+
+@pytest.fixture
+def saved_reel():
+    folder = f"{L.REELS_DIR}/demo"
+    shutil.rmtree(folder, ignore_errors=True)
+    os.makedirs(f"{folder}/images")
+    open(f"{folder}/demo_FINAL.mp4", "wb").write(b"x")
+    json.dump(PLAN, open(f"{folder}/plan.json", "w"))
+    P.save_publish_kit(KIT, folder)
+    return folder
 
 
 def test_reels_tab(saved_reel, monkeypatch):
     labels = dict((value, label) for label, value in CC.list_reels())
     assert "✅" in labels[saved_reel] and "demo" in labels[saved_reel]
     shown = CC.show_reel(saved_reel)
-    assert shown[0].endswith("demo_FINAL.mp4") and shown[1] == "guion demo" and shown[5]["value"] == "Título"
+    assert shown[0].endswith("demo_FINAL.mp4") and "## Scene 1: Uno" in shown[1] and shown[5]["value"] == "Título"
     seen = {}
 
     def fake_reassemble(folder, montage):
         seen["args"] = (folder, montage)
-        yield snapshot(stage="Listo", pct=100, done=True, video=f"{folder}/demo_FINAL.mp4", reel_dir=folder)
+        yield snapshot(stage="Done", pct=100, done=True, video=f"{folder}/demo_FINAL.mp4", reel_dir=folder)
     monkeypatch.setattr(CC, "reassemble_reel", fake_reassemble)
     outputs = list(CC.reassemble_ui(saved_reel, *P.DEFAULT_MONTAGE.values()))
     assert seen["args"][0] == saved_reel and outputs[-1][2].endswith("demo_FINAL.mp4")
 
 
-def test_failed_reel_is_listed_with_its_stage_and_can_be_resumed(saved_reel, monkeypatch):
-    P.write_run_state(saved_reel, "failed", "Sincronizando subtítulos", "boom")
-    P.save_settings(saved_reel, {"idea": "Idea demo", "clip_provider": "wavespeed", "confirm_paid": True,
-                                 "llm_provider": "OpenAI (ChatGPT)", "voice_provider": "edge", "montage": {"aspect": "1:1"}})
+def test_a_reel_waiting_for_review_opens_its_panel(saved_reel, monkeypatch):
+    ffmpeg("-f", "lavfi", "-i", "color=c=red:s=64x64", "-frames:v", "1", f"{saved_reel}/images/scene_01.png")
+    P.save_settings(saved_reel, {"idea": "Idea demo", "clip_provider": "ai_photos", "llm_provider": "OpenAI (ChatGPT)",
+                                 "voice_provider": "edge", "make_cover": False})
+    P.write_run_state(saved_reel, "review", "images")
     label = dict((v, l) for l, v in CC.list_reels())[saved_reel]
-    assert label.startswith("❌") and "Sincronizando subtítulos" in label
+    assert label.startswith("👀") and label.endswith("· images")
+    assert "Open in «Produce»" in CC.show_reel(saved_reel)[3]
+    outputs = list(CC.open_reel_ui(saved_reel))
+    assert outputs[0][0].selected == "produce"
+    review = outputs[-1][1 + OUT["review"]]
+    assert review["stage"] == "images" and [i["id"] for i in review["items"]] == ["scene1_image"]
+    assert review["items"][0]["text"] == "a dog" and outputs[-1][1 + OUT["reel"]] == saved_reel
+
+
+def test_a_failed_reel_continues_with_its_own_settings(saved_reel, monkeypatch):
+    P.write_run_state(saved_reel, "failed", "Clip 2/3", "boom")
+    os.remove(f"{saved_reel}/demo_FINAL.mp4")
+    label = dict((v, l) for l, v in CC.list_reels())[saved_reel]
+    assert label.startswith("❌") and "Clip 2/3" in label
     note = CC.show_reel(saved_reel)[3]
-    assert "Reanudar" in note and "boom" in note
+    assert "continue from there" in note and "boom" in note
     seen = {}
 
-    def fake_produce(settings, resume_dir=None):
-        seen.update(settings=settings, resume_dir=resume_dir)
-        yield snapshot(stage="Listo", pct=100, done=True, reel_dir=resume_dir)
-    monkeypatch.setattr(CC, "produce_reel", fake_produce)
-    list(CC.resume_reel_ui(saved_reel))
-    assert seen["resume_dir"] == saved_reel and seen["settings"]["idea"] == "Idea demo"
-    assert seen["settings"]["confirm_paid"] is True                 # the reel was already confirmed once
-    assert seen["settings"]["montage"]["aspect"] == "1:1"
+    def fake_continue(reel_dir, edited=None):
+        seen["reel"] = reel_dir
+        yield snapshot(stage="Done", pct=100, done=True, reel_dir=reel_dir)
+    monkeypatch.setattr(CC, "continue_reel", fake_continue)
+    outputs = list(CC.open_reel_ui(saved_reel))
+    assert seen["reel"] == saved_reel and "Done" in outputs[-1][1]
 
 
 def test_reel_settings_fill_the_form(saved_reel):
-    P.save_settings(saved_reel, {"idea": "Lobos", "language": "pt", "llm_provider": "Ollama (local)",
+    P.save_settings(saved_reel, {"idea": "Lobos", "llm_provider": "Ollama (local)", "tone": "dramatic",
                                  "llm_model": "qwen2.5:14b", "image_provider": "nano_banana", "make_cover": False,
                                  "clip_provider": "gemini_omni", "confirm_paid": True, "style": "talking_objects",
                                  "voice_provider": "azure", "voice": "es-ES-ElviraNeural", "music_source": "none",
-                                 "make_kit": False, "montage": {"aspect": "16:9", "font": "Bangers", "variants": 2}})
+                                 "scene_sound": "elevenlabs", "review_steps": False, "make_kit": False,
+                                 "montage": {"aspect": "16:9", "font": "Bangers", "variants": 2, "clip_audio": False}})
     updates = CC.use_reel_settings_ui(saved_reel)
     form = dict(zip(CC.PRODUCE_KEYS + CC.MONTAGE_KEYS, updates))
-    assert form["idea"]["value"] == "Lobos" and form["language"]["value"] == "pt"
+    assert form["idea"]["value"] == "Lobos" and form["tone"]["value"] == "dramatic"
     assert form["style"]["value"] == "talking_objects" and form["image_provider"]["value"] == "nano_banana"
     assert form["make_cover"]["value"] is False and form["use_keyframes"]["visible"]
     assert form["llm_provider"]["value"] == "Ollama (local)" and form["llm_provider"]["choices"] == ["Ollama (local)"]
@@ -213,22 +288,23 @@ def test_reel_settings_fill_the_form(saved_reel):
     assert form["clip_type"]["value"] == "external_ai" and form["clip_provider"]["value"] == "gemini_omni"
     assert form["confirm_paid"]["visible"] and form["confirm_paid"]["value"] is False   # never pre-confirmed
     assert form["voice_type"]["value"] == "external" and form["voice"]["value"] == "es-ES-ElviraNeural"
-    assert form["aspect"]["value"] == "16:9" and form["variants"]["value"] == 2
+    assert form["scene_sound"]["value"] == "elevenlabs" and form["review_steps"]["value"] is False
+    assert form["aspect"]["value"] == "16:9" and form["variants"]["value"] == 2 and form["clip_audio"]["value"] is False
     footage, ai_box, kit_section, note, reel_state, tabs = updates[-6:]
     assert kit_section["visible"] is False and ai_box["visible"] is False
-    assert reel_state == saved_reel and "cargados" in note
+    assert reel_state == saved_reel and "loaded" in note
 
 
 def test_presets_round_trip(ui):
     _, c = ui
-    values = form_values(c, duration=60, idea="no se guarda")
-    message, _ = CC.save_preset_ui("Mi estilo / lobos", *values)
-    assert "guardado" in message and "Mi estilo lobos" in CC.list_presets()
-    updates = CC.load_preset_ui("Mi estilo lobos")
+    values = form_values(c, duration=60, idea="not saved")
+    message, _ = CC.save_preset_ui("My style / wolves", *values)
+    assert "saved" in message and "My style wolves" in CC.list_presets()
+    updates = CC.load_preset_ui("My style wolves")
     form = dict(zip(CC.PRODUCE_KEYS + CC.MONTAGE_KEYS, updates))
-    assert form["duration"]["value"] == 60 and "cargados" in updates[-2]
+    assert form["duration"]["value"] == 60 and "loaded" in updates[-2]
     assert "value" not in form["idea"]                              # loading a preset keeps the idea you typed
-    saved = json.load(open(f"{CC.PRESETS_DIR}/Mi estilo lobos.json"))
+    saved = json.load(open(f"{CC.PRESETS_DIR}/My style wolves.json"))
     assert "confirm_paid" not in saved and "own_files" not in saved and "idea" not in saved
 
 
@@ -239,20 +315,20 @@ def test_background_job_survives_a_disconnected_page(monkeypatch):
         yield snapshot(reel_dir="/r")
         while not gate["go"]:
             time.sleep(0.01)
-        yield snapshot(stage="Listo", pct=100, done=True, reel_dir="/r")
+        yield snapshot(stage="Done", pct=100, done=True, reel_dir="/r")
     monkeypatch.setattr(CC, "produce_reel", slow_produce)
     monkeypatch.setattr(CC, "drive_responds", lambda timeout=10: False)
     empty = [""] * len(CC.PRODUCE_KEYS) + list(P.DEFAULT_MONTAGE.values())
     page = CC.produce_ui(*empty)
-    next(page)                                       # "Iniciando…"
-    assert "Guion" in next(page)[0]
+    next(page)                                       # "Starting…"
+    assert "Storyboard" in next(page)[0]
     page.close()                                     # the browser tab is closed / the tunnel drops
     assert jobs.current().running                    # ...and the production keeps going
     blocked = list(CC.produce_ui(*empty))
-    assert "Ya hay un trabajo en curso" in blocked[-1][0]
+    assert "A job is already running" in blocked[-1][0]
     gate["go"] = True
     reopened = list(CC.attach_ui())                  # the page is opened again
-    assert "Listo" in reopened[-1][0] and not jobs.current().running
+    assert "Done" in reopened[-1][0] and not jobs.current().running
 
 
 def test_stop_cancels_the_job(monkeypatch):
@@ -263,24 +339,49 @@ def test_stop_cancels_the_job(monkeypatch):
     monkeypatch.setattr(CC, "produce_reel", endless)
     page = CC.produce_ui(*([""] * len(CC.PRODUCE_KEYS) + list(P.DEFAULT_MONTAGE.values())))
     next(page), next(page)
-    assert "Deteniendo" in CC.stop_ui()
+    assert "Stopping" in CC.stop_ui()
     last = list(page)[-1]
-    assert "Detenido por ti" in last[0] and not jobs.current().running
+    assert "Stopped by you" in last[0] and not jobs.current().running
 
 
 def test_audio_studio():
     ui = audio.build_ui()
     assert ui is not None
     clip, message = audio.speak("hola", "minimax", "v", None, "")
-    assert clip is None and "Falta la clave" in message
+    assert clip is None and "is missing" in message
     assert {"azure", "gemini_tts", "voxcpm"} <= {v for _, v in audio.on_type("external")["choices"]}
     ui.close()
 
 
 @pytest.mark.browser
-def test_opens_in_a_browser(ui, monkeypatch, tmp_path):
+def test_opens_in_a_browser_and_reviews_items_one_by_one(ui, monkeypatch, tmp_path):
     playwright = pytest.importorskip("playwright.sync_api")
     blocks, _ = ui
+    reel = f"{L.REELS_DIR}/browser-review"
+    os.makedirs(f"{reel}/images", exist_ok=True)
+    items = []
+    for i, color in ((1, "red"), (2, "blue")):
+        ffmpeg("-f", "lavfi", "-i", f"color=c={color}:s=96x160", "-frames:v", "1", f"{reel}/images/scene_0{i}.png")
+        items.append({"id": f"scene{i}_image", "label": f"Scene {i} · image", "kind": "image",
+                      "path": f"{reel}/images/scene_0{i}.png", "text": f"prompt {i}", "text_label": "Image prompt"})
+    review = {"reel_dir": reel, "stage": "images", "storyboard": "", "items": items}
+    calls = []
+
+    def fake_produce(settings, resume_dir=None):
+        yield snapshot(reel_dir=reel, review=review, stage="Review the images")
+
+    def fake_item(reel_dir, item_id, text=None):
+        calls.append((item_id, text))
+        changed = dict(review, items=[dict(i, text=text if i["id"] == item_id else i["text"]) for i in items])
+        yield snapshot(reel_dir=reel_dir, review=changed, stage="Review the images")
+
+    def fake_continue(reel_dir, edited=None):
+        calls.append(("confirm", reel_dir))
+        yield snapshot(reel_dir=reel_dir, stage="Done", pct=100, done=True)
+    monkeypatch.setattr(CC, "produce_reel", fake_produce)
+    monkeypatch.setattr(CC, "regenerate_item", fake_item)
+    monkeypatch.setattr(CC, "continue_reel", fake_continue)
+    monkeypatch.setattr(CC, "drive_responds", lambda timeout=10: False)
     monkeypatch.setattr(L, "kill_port", lambda port: None)
     L.launch_gradio(blocks, 7998, css=CC.UI_CSS)
     errors = []
@@ -294,12 +395,31 @@ def test_opens_in_a_browser(ui, monkeypatch, tmp_path):
         chips = page.locator("button.chip")
         assert chips.count() == 8 and not page.locator(".modal").first.is_visible()
         texts = [chips.nth(i).inner_text() for i in range(8)]
-        assert texts[4] == "📐 9:16" and texts[5] == "⏱️ 35 s" and texts[7] == "⚙️ Ajustes"
+        assert texts[4] == "📐 9:16" and texts[5] == "⏱️ 35 s" and texts[7] == "⚙️ Settings"
         for i in range(8):                                   # every picker opens and closes
             chips.nth(i).click()
             page.wait_for_selector(".modal .modal-card", state="visible", timeout=10000)
-            page.get_by_role("button", name="✔ Listo").locator("visible=true").first.click()
+            page.get_by_role("button", name="✔ Done").locator("visible=true").first.click()
             page.wait_for_selector(".modal .modal-card", state="hidden", timeout=10000)
-        page.screenshot(path=str(tmp_path / "control_center.png"))
+
+        page.locator(".composer textarea").fill("Una idea")
+        page.locator("button.send").click()
+        page.wait_for_selector("button.regen", timeout=20000)
+        assert page.locator("button.regen").count() == 2 and "Review the images" in page.inner_text(".review")
+        box = page.get_by_label("Image prompt").nth(1)
+        box.fill("a blue whale")
+        page.get_by_role("button", name="🔄 Regenerate scene2_image").click()
+        page.wait_for_function("() => [...document.querySelectorAll('textarea')].some(t => t.value === 'a blue whale')"
+                               " && document.querySelectorAll('button.regen').length === 2", timeout=20000)
+        time.sleep(1)
+        page.get_by_role("button", name="🔄 Regenerate scene1_image").click()        # buttons still work after re-render
+        page.wait_for_timeout(1500)
+        page.screenshot(path=str(tmp_path / "review.png"), full_page=True)
+        page.get_by_role("button", name="✅ Confirm and continue").click()
+        page.wait_for_function("() => !document.querySelector('.review') || "
+                               "getComputedStyle(document.querySelector('.review')).display === 'none' || "
+                               "document.querySelector('.review').offsetParent === null", timeout=20000)
         browser.close()
+    assert calls[:2] == [("scene2_image", "a blue whale"), ("scene1_image", "prompt 1")]
+    assert calls[2] == ("confirm", reel)
     assert not errors

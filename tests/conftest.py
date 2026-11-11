@@ -61,13 +61,15 @@ def media():
         "portrait": ("-f", "lavfi", "-i", "testsrc2=size=720x1280:rate=30", "-t", "4", "-pix_fmt", "yuv420p"),
         "landscape": ("-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25", "-t", "6", "-pix_fmt", "yuv420p"),
         "short_ai": ("-f", "lavfi", "-i", "mandelbrot=size=480x832:rate=24", "-t", "3", "-pix_fmt", "yuv420p"),
+        "with_sound": ("-f", "lavfi", "-i", "testsrc2=size=720x1280:rate=24", "-f", "lavfi", "-i",
+                       "sine=frequency=440:duration=4", "-t", "4", "-pix_fmt", "yuv420p", "-shortest"),
         "voice": ("-f", "lavfi", "-i", "sine=frequency=220:duration=6"),
         "tone_wav": ("-f", "lavfi", "-i", "sine=frequency=300:duration=1"),
         "tone_mp3": ("-f", "lavfi", "-i", "sine=frequency=300:duration=1"),
         "tone_pcm": ("-f", "lavfi", "-i", "sine=frequency=300:duration=1", "-f", "s16le", "-ar", "24000", "-ac", "1"),
         "image": ("-f", "lavfi", "-i", "testsrc=size=768x1344", "-frames:v", "1"),
     }
-    ext = {"portrait": "mp4", "landscape": "mp4", "short_ai": "mp4", "voice": "mp3", "tone_wav": "wav",
+    ext = {"with_sound": "mp4", "portrait": "mp4", "landscape": "mp4", "short_ai": "mp4", "voice": "mp3", "tone_wav": "wav",
            "tone_mp3": "mp3", "tone_pcm": "pcm", "image": "png"}
     paths = {}
     for name, args in files.items():

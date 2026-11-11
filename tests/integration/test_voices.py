@@ -98,9 +98,9 @@ def test_voice_errors_are_explained(voice_keys, http, audio):
     assert path is None and "HTTP 402" in message
     http.add("POST", r"api\.modelbest\.cn/v1/audio/speech", FakeResponse(lines=sse([audio["wav"][:100]], done=False)))
     path, message = L.synthesize_voice("x", "voxcpm", "default", output_path=f"{L.WORK_DIR}/v.mp3")
-    assert path is None and "cortó" in message
+    assert path is None and "cut the audio" in message
     path, message = L.synthesize_voice("x", "f5", "", output_path=f"{L.WORK_DIR}/f5.mp3")
-    assert path is None and "Celda 6" in message
+    assert path is None and "Cell 6" in message
 
 
 def test_connection_tests(http):
@@ -110,7 +110,7 @@ def test_connection_tests(http):
     http.add("GET", r"upload-post\.com/api/uploadposts/history", auth_aware)
     assert L.test_credential("upload_post", {"api_key": "real", "username": "me"})[0] is True
     ok, message = L.test_credential("upload_post", {"api_key": "real", "username": ""})
-    assert ok is False and "Usuario" in message
+    assert ok is False and "User (Upload-Post profile)" in message
     http.add("GET", r"elevenlabs\.io/v1/user/subscription", FakeResponse(401, text='{"detail":{"status":"missing_permissions"}}'))
     assert L.test_credential("elevenlabs", {"api_key": "x"})[0] is True
     http.add("GET", r"modelbest\.cn/v1/models", FakeResponse(200, json={}))

@@ -43,7 +43,7 @@ def test_media_delivered_as_a_file_uri(gemini, http, tmp_path):
 
 def test_filtered_image_is_explained(gemini, http, tmp_path):
     http.add("POST", r"v1beta/interactions$", FakeResponse(json={"status": "completed", "steps": []}))
-    with pytest.raises(RuntimeError, match="no devolvió imagen"):
+    with pytest.raises(RuntimeError, match="returned no image"):
         P.generate_image("nano_banana", "x", str(tmp_path / "c.png"))
     http.add("POST", r"v1beta/interactions$", FakeResponse(status=400, json={"error": {"message": "bad model"}}))
     with pytest.raises(RuntimeError, match="bad model"):
@@ -80,11 +80,3 @@ def test_live_model_lists(keys, http):
     assert P.list_llm_models("openai") == ["gpt-6.1-sol", "gpt-6.1-mini"]
     http.add("GET", r"api.anthropic.com/v1/models$", FakeResponse(status=401, json={}))
     assert P.list_llm_models("anthropic") == ["claude-sonnet-5-5"]          # no key yet: just the default
-
-
-def test_style_and_automatic_choices_reach_the_prompt():
-    prompt = P.build_plan_prompt("auto", "es", 42, "auto", "", "9:16", "talking_objects")
-    assert "exactly 6 scenes" in prompt and "first-person monologue" in prompt
-    assert "fits the idea and the style best" in prompt and "in the chosen visual style" in prompt
-    assert "photorealistic" in P.build_plan_prompt(4, style="narrated") and "exactly 4 scenes" in P.build_plan_prompt(4)
-    assert [P.auto_scenes(d) for d in (15, 35, 90)] == [3, 5, 10]

@@ -53,15 +53,16 @@ def services(monkeypatch):
 
 
 def check(clip="pexels", llm="openai", voice="edge", image="flux", music="none", paid=False, own=0, cover=False,
-          keyframes=False):
-    return L.check_selection(llm, clip, voice, image, music, paid, own, cover, keyframes)
+          keyframes=False, sound="none"):
+    return L.check_selection(llm, clip, voice, image, music, paid, own, cover, keyframes, sound)
 
 
 def test_every_provider_is_checked_without_errors(keys, services):
     """Each provider of each kind, swapped into a baseline selection (the kinds never depend on each other)."""
     options = dict(llm=["openai", "ollama", "compat:groq", "anthropic", "gemini"], clip=list(L.CLIP_PROVIDERS),
                    voice=list(L.VOICE_PROVIDERS), image=list(L.IMAGE_PROVIDERS), music=list(L.MUSIC_SOURCES),
-                   paid=[False, True], own=[0, 2], cover=[False, True], keyframes=[False, True])
+                   paid=[False, True], own=[0, 2], cover=[False, True], keyframes=[False, True],
+                   sound=list(L.SCENE_SOUNDS))
     for name, values in options.items():
         for value in values:
             errors, warnings = check(**{name: value})
@@ -70,16 +71,16 @@ def test_every_provider_is_checked_without_errors(keys, services):
 
 def test_paid_clips_need_confirmation_and_their_key(keys, services):
     errors, _ = check("wavespeed")
-    assert any("Confirmo el cobro" in e for e in errors)
+    assert any("I accept the charge" in e for e in errors)
     errors, warnings = check("wavespeed", paid=True)
-    assert any("cobra" in w for w in warnings) and any("WaveSpeed" in e for e in errors)
+    assert any("charges" in w for w in warnings) and any("WaveSpeed" in e for e in errors)
     errors, _ = check("gemini_omni", paid=True)
     assert any("Gemini" in e for e in errors)                  # Omni uses the Gemini key
 
 
 def test_own_clips_need_files(keys, services):
     errors, _ = check("upload")
-    assert any("Sube al menos" in e for e in errors)
+    assert any("Upload at least" in e for e in errors)
     errors, _ = check("footage")
     assert any("footage" in e for e in errors)
     open(f"{L.FOOTAGE_DIR}/clip.mp4", "w").close()
@@ -93,20 +94,24 @@ def test_own_clips_need_files(keys, services):
 def test_music_sources(keys, services, monkeypatch):
     monkeypatch.setattr(L, "music_files", lambda: [])
     _, warnings = check(music="library")
-    assert any("No hay canciones" in w for w in warnings)
+    assert any("There are no songs" in w for w in warnings)
     errors, _ = check(music="elevenlabs")
     assert any("ElevenLabs" in e for e in errors)
+    errors, warnings = check(sound="elevenlabs")
+    assert any("ElevenLabs" in e and "the sound effects" in e for e in errors) and any("sound effect" in w for w in warnings)
+    errors, _ = check(music="elevenlabs", sound="elevenlabs")
+    assert any("the sound effects and the AI music" in e for e in errors)      # one key, both uses named
 
 
 def test_the_image_engine_is_needed_only_when_something_uses_it(keys, services):
     errors, _ = check(image="nano_banana")
     assert not any("Gemini" in e for e in errors)              # no cover, stock clips: no image needed
     errors, _ = check(image="nano_banana", cover=True)
-    assert any("Gemini" in e and "portada" in e for e in errors)
+    assert any("Gemini" in e and "the cover" in e for e in errors)
     errors, _ = check("ai_photos", image="image_api")
-    assert any("las fotos de los clips" in e for e in errors)
+    assert any("the pictures of the clips" in e for e in errors)
     errors, _ = check("gemini_omni", image="nano_banana", paid=True, keyframes=True)
-    assert any("imagen base" in e for e in errors)
+    assert any("the first frame" in e for e in errors)
 
 
 def test_local_tools_that_are_not_running_are_named(keys, services):
@@ -114,4 +119,4 @@ def test_local_tools_that_are_not_running_are_named(keys, services):
     assert any("Ollama" in e for e in errors) and any("F5-TTS" in e for e in errors)
     assert not any("Forge" in e for e in errors)
     _, warnings = check("wan22")
-    assert any("texto a video" in w for w in warnings)
+    assert any("text-to-video" in w for w in warnings)

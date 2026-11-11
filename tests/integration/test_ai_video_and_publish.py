@@ -62,7 +62,7 @@ def test_paid_clip_is_created_once_polled_and_downloaded(provider, video_keys, h
 
 def test_a_rejected_paid_task_is_never_retried(video_keys, http):
     http.add("POST", r"wavespeed", FakeResponse(status=502, text="bad gateway"))
-    with pytest.raises(RuntimeError, match="rechazó"):
+    with pytest.raises(RuntimeError, match="rejected the task"):
         P.generate_ai_video("wavespeed", "x", 5, "9:16", f"{P.WORK_DIR}/x.mp4")
     assert len([c for c in http.calls if c["method"] == "POST"]) == 1
 
@@ -94,5 +94,5 @@ def test_publish_sends_the_video_with_the_api_key(video_keys, http, media):
     assert call["headers"]["Authorization"] == "Apikey up-key" and "video" in call["files"] and body["request_id"] == "r1"
     with pytest.raises(RuntimeError, match="kit"):
         P.publish_reel(media["portrait"], None, ["tiktok"])
-    with pytest.raises(RuntimeError, match="plataforma"):
+    with pytest.raises(RuntimeError, match="Pick at least one platform"):
         P.publish_reel(media["portrait"], kit, [])

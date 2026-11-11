@@ -25,13 +25,13 @@ class Job:
                 self._publish(snapshot)
                 if self.cancelled:
                     generator.close()          # stops at the next step; the step already running finishes alone
-                    self._publish(dict(snapshot, failed=True, done=False, stage="Detenido por ti",
-                                       log=snapshot.get("log", "") + "\n⏹ Detenido por ti."))
+                    self._publish(dict(snapshot, failed=True, done=False, stage="Stopped by you",
+                                       log=snapshot.get("log", "") + "\n⏹ Stopped by you."))
                     break
         except Exception:
             last = dict(self.snapshot or {})
-            self._publish(dict(last, failed=True, stage="Error interno",
-                               log=last.get("log", "") + "\n❌ Error interno:\n" + traceback.format_exc()[-800:]))
+            self._publish(dict(last, failed=True, stage="Internal error",
+                               log=last.get("log", "") + "\n❌ Internal error:\n" + traceback.format_exc()[-800:]))
         finally:
             self.finished = True
             self.updates += 1
@@ -53,7 +53,7 @@ def start(kind, label, generator_factory):
     with _LOCK:
         current = _STATE["current"]
         if current is not None and current.running:
-            raise RuntimeError(f"Ya hay un trabajo en curso ({current.label}). Espera a que termine o detenlo.")
+            raise RuntimeError(f"A job is already running ({current.label}). Wait for it to finish or stop it.")
         job = Job(kind, label, generator_factory)
         _STATE["current"] = job
         job.thread.start()

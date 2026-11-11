@@ -48,8 +48,8 @@ def install_f5():
 def speak(text, voice_provider, voice, ref_audio, ref_text):
     missing = [s for s in VOICE_PROVIDERS[voice_provider].get("creds", []) if credential_missing(s)]
     if missing:
-        return None, (f"Falta la clave de {', '.join(CREDENTIALS[s]['label'] for s in missing)}: "
-                      "agrégala en la pestaña 🔑 Claves API del Centro de Control.")
+        return None, (f"The key of {', '.join(CREDENTIALS[s]['label'] for s in missing)} is missing: "
+                      "add it in the 🔑 API keys tab of the Control Center.")
     return synthesize_voice(text, voice_provider, voice, ref_audio, ref_text,
                             output_path=f"{WORK_DIR}/tts_test_{int(time.time())}.mp3")
 
@@ -71,20 +71,20 @@ def on_provider(voice_provider):
 def build_ui():
     import gradio as gr
     with gr.Blocks(title="Audio Studio") as ui:
-        gr.Markdown("### 🎙️ Estudio de Voz\nPrueba cualquier voz antes de usarla en un reel. "
-                    "Las claves se configuran en la pestaña 🔑 Claves API del Centro de Control (Celda 7).")
-        text_in = gr.Textbox(label="Texto a narrar", lines=3,
+        gr.Markdown("### 🎙️ Voice Studio\nTry any voice before using it in a reel. "
+                    "Keys are set in the 🔑 API keys tab of the Control Center (Cell 7).")
+        text_in = gr.Textbox(label="Text to read", lines=3,
                              value="¿Sabías que los pastores alemanes pueden aprender una orden nueva en solo cinco repeticiones?")
-        type_rd = gr.Radio([(v, k) for k, v in VOICE_TYPES.items()], value="local", label="Tipo")
+        type_rd = gr.Radio([(v, k) for k, v in VOICE_TYPES.items()], value="local", label="Type")
         with gr.Row():
-            provider_dd = gr.Dropdown(voice_provider_choices("local"), value="edge", label="Proveedor")
-            voice_dd = gr.Dropdown(voice_choices("edge"), value=EDGE_VOICES[0][1], label="Voz (editable)",
+            provider_dd = gr.Dropdown(voice_provider_choices("local"), value="edge", label="Provider")
+            voice_dd = gr.Dropdown(voice_choices("edge"), value=EDGE_VOICES[0][1], label="Voice (editable)",
                                    allow_custom_value=True)
-        ref_audio_in = gr.Audio(label="Muestra de 5-10 s para clonar", type="filepath", visible=False)
-        ref_text_in = gr.Textbox(label="Transcripción de la muestra (opcional)", visible=False)
-        speak_btn = gr.Button("🎙️ Generar audio de prueba", variant="primary")
-        status_out = gr.Textbox(label="Estado")
-        audio_out = gr.Audio(label="Resultado")
+        ref_audio_in = gr.Audio(label="5-10 s sample to clone", type="filepath", visible=False)
+        ref_text_in = gr.Textbox(label="Transcript of the sample (optional)", visible=False)
+        speak_btn = gr.Button("🎙️ Make a test audio", variant="primary")
+        status_out = gr.Textbox(label="Status")
+        audio_out = gr.Audio(label="Result")
         type_rd.change(on_type, type_rd, provider_dd)
         provider_dd.change(on_provider, provider_dd, [voice_dd, ref_audio_in, ref_text_in])
         speak_btn.click(speak, [text_in, provider_dd, voice_dd, ref_audio_in, ref_text_in], [audio_out, status_out])

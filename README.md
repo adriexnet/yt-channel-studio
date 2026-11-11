@@ -1,125 +1,142 @@
 # 🎬 YT-Channel-Studio
 
-[![Pruebas](https://github.com/adriexnet/yt-channel-studio/actions/workflows/tests.yml/badge.svg)](https://github.com/adriexnet/yt-channel-studio/actions/workflows/tests.yml)
-[![Abrir en Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/adriexnet/yt-channel-studio/blob/main/notebook/YT-Channel-Studio.ipynb)
+[![Tests](https://github.com/adriexnet/yt-channel-studio/actions/workflows/tests.yml/badge.svg)](https://github.com/adriexnet/yt-channel-studio/actions/workflows/tests.yml)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/adriexnet/yt-channel-studio/blob/main/notebook/YT-Channel-Studio.ipynb)
 
-Produce, monta y publica videos cortos (Reels, Shorts, TikTok) desde Google Colab: escribes una idea y el
-estudio genera el guion, la voz, los clips, la música, los subtítulos y el kit de publicación, y los sube a tus redes.
-Cada parte elige su proveedor por separado, local (gratis, en tu GPU de Colab) o externo (por API).
+Make, assemble and publish short videos (Reels, Shorts, TikTok) from Google Colab. Write an idea; the studio
+writes a storyboard and makes the images, the voice, the clips, the music, the subtitles and the publish kit,
+then uploads the reel to your networks. You can review and adjust every step before it goes on. Each kind of
+content picks its own provider: local (free, on your Colab GPU) or external (through an API).
 
-## Inicio rápido
+## Quick start
 
-1. Abre el notebook con el botón **Abrir en Colab** de arriba.
-2. **Entorno de ejecución → Cambiar tipo de entorno → GPU** (T4 o L4). Sin GPU también funciona, con menos opciones.
-3. Ejecuta la **Celda 1** y acepta el permiso de Google Drive. Luego la **Celda 2**.
-4. Ejecuta la **Celda 7** y abre el link del **Centro de Control** que aparece al final.
-5. En la pestaña **🔑 Claves API** guarda al menos un modelo de lenguaje (OpenAI, Gemini, Groq…) y la clave
-   gratuita de [Pexels](https://www.pexels.com/api/). Pulsa **Probar conexión** para verificarlas.
-6. Vuelve a **🎬 Producir**, escribe tu idea y pulsa **➤**.
+1. Open the notebook with the **Open in Colab** button above.
+2. **Runtime → Change runtime type → GPU** (T4 or L4). It also works without a GPU, with fewer options.
+3. Run **Cell 1** and approve the Google Drive permission. Then run **Cell 2**.
+4. Run **Cell 7** and open the **Control Center** link printed at the end.
+5. In the **🔑 API keys** tab, save at least one language model (OpenAI, Gemini, Groq…) and the free
+   [Pexels](https://www.pexels.com/api/) key. Press **Test the connection** to check them.
+6. Back in **🎬 Produce**, type your idea and press **➤**.
 
-## Cómo se usa
+## How it works
 
-Escribes la idea y, debajo, cada botón muestra lo elegido y abre su selector: **🧠 texto** (LLM y modelo,
-con la lista de modelos que ofrece tu proveedor), **🖼️ imagen**, **🎙️ voz**, **🎞️ video** (de dónde salen
-los clips), **📐 formato**, **⏱️ duración** y **🎭 estilo** (automático, animado, objetos que hablan, top o
-datos curiosos, historia, POV, tutorial…). Todo lo demás está en **⚙️ Ajustes**, que solo muestra lo que
-aplica a lo que elegiste (por ejemplo, frames y pasos solo con video IA local): idioma, tono y número de
-escenas (automáticos por defecto), portada y kit de publicación (activados por defecto), música, montaje y
-subtítulos, y tus presets. Bajo la barra de progreso ves el paso actual; **🔧 Mostrar log técnico** abre
-el detalle completo para depurar.
+Type the idea in the language the video should speak. Under it, each button shows what is chosen and opens its
+picker: **🧠 text** (LLM and model, with the list of models your provider offers), **🖼️ image**, **🎙️ voice**,
+**🎞️ video** (where the clips come from), **📐 format**, **⏱️ length** and **🎭 style** (automatic, animated,
+talking objects, top list, story, POV, tutorial…). Everything else is in **⚙️ Settings**, which only shows what
+applies to your choice (frames and steps only for local AI video, for example).
 
-El reel, su guion, la voz, los clips y el kit de publicación quedan en tu Drive, en `YT-Channel-Studio/reels/`.
+The reel is made step by step, and with **👀 Review each step** on (the default) it waits for you after each one:
 
-## Las celdas
+1. **Storyboard.** Scene by scene: title, what is seen, what is said and what is heard, in the language of
+   your idea. Edit the text directly, or regenerate it with notes («more humor»). A scene whose narration is
+   `—` has no voice: it lasts its `Duration` and carries its sound. On confirm, the English prompts for the AI
+   tools are written for the scenes you changed.
+2. **Images.** The cover and the image of each scene (`scene3_image`), each one with its prompt and its own
+   **Regenerate** button.
+3. **Audio.** One narration per scene (`scene2_audio`), plus a sound effect per scene if you chose ElevenLabs
+   sound effects. Each scene lasts as long as its narration.
+4. **Clips.** One clip per scene (`scene4_clip`), requested at the exact length of its scene.
+5. **Assembly.** Each scene is built with its own sound before the scenes are joined, so a picture never
+   drifts from the sound it belongs to; the music goes over the whole reel and ducks under the voice.
 
-El notebook solo llama funciones de este repositorio; el código vive aquí y se actualiza con la Celda 1.
+Under the progress bar you see the current step; **🔧 Show the technical log** opens the full detail.
+Everything (video, storyboard, voices, clips, kit, settings) is saved in your Drive under `YT-Channel-Studio/reels/`.
 
-| Celda | Qué hace | ¿Obligatoria? |
+## The cells
+
+The notebook only calls functions of this repository; the code lives here and Cell 1 updates it.
+
+| Cell | What it does | Required? |
 |---|---|---|
-| 1 · Base | Descarga o actualiza el código, conecta Drive, crea carpetas y `api_keys.toml` | Sí, siempre primero |
-| 2 · Entorno | ffmpeg, cloudflared, paquetes y fuentes de subtítulos | Sí |
-| 3 · Ollama | LLMs locales y su chat | Solo si usas un LLM local |
-| 4 · Forge | Imágenes FLUX (portadas, imagen base, fotos IA) | Solo para imágenes locales |
-| 5 · ComfyUI | Video IA local (Wan 2.2, LTX-Video) | Solo para video IA local |
-| 6 · Estudio de voz | Probar voces y clonar la tuya con F5-TTS | Opcional |
-| 7 · Centro de Control | Producir, montar de nuevo, publicar y guardar claves | Sí |
-| 8 · Dashboard | Todos los links públicos activos | Opcional |
+| 1 · Base | Downloads or updates the code, connects Drive, creates folders and `api_keys.toml` | Yes, always first |
+| 2 · Environment | ffmpeg, cloudflared, packages and subtitle fonts | Yes |
+| 3 · Ollama | Local LLMs and their chat | Only for a local LLM |
+| 4 · Forge | FLUX images (cover, first frames, AI photos) | Only for local images |
+| 5 · ComfyUI | Local AI video (Wan 2.2, LTX-Video) | Only for local AI video |
+| 6 · Voice studio | Try voices and clone yours with F5-TTS | Optional |
+| 7 · Control Center | Produce, review, re-assemble, publish and save keys | Yes |
+| 8 · Dashboard | Every active public link | Optional |
 
-Las herramientas pesadas (Forge, ComfyUI, F5-TTS) se instalan cada una en su propio entorno virtual con `uv`,
-así sus versiones de PyTorch nunca chocan. Los modelos se guardan en Drive y solo se descargan una vez.
+The heavy tools (Forge, ComfyUI, F5-TTS) each get their own virtual environment with `uv`, so their PyTorch
+versions never clash. Models are saved in Drive and downloaded once.
 
-## Proveedores
+## Providers
 
-| Contenido | Local | Externo |
+| Content | Local | External |
 |---|---|---|
-| Guion y kit | Ollama | OpenAI, Anthropic, Google Gemini y cualquier API compatible con OpenAI (Groq, OpenRouter, DeepSeek…) |
-| Clips | Wan 2.2, LTX-Video, fotos animadas, tus propios clips | Pexels, Pixabay, Coverr (gratis); Google Gemini Omni (sucesor de Veo en la API de Gemini, con audio), WaveSpeed, Seedance, OFox, MuAPI, Metaso, Infistar (de pago, con confirmación) |
-| Voz | Edge-TTS, F5-TTS (clonación) | ElevenLabs, OpenAI, Azure, Gemini TTS, SiliconFlow, MiMo, MiniMax, Fish Audio, VoxCPM |
-| Imágenes (portada, primer fotograma, fotos IA) | FLUX (Forge) | Nano Banana (Gemini) y cualquier API de imágenes compatible con OpenAI |
-| Música | Tus canciones en `Drive/music` | ElevenLabs Music |
-| Publicación | — | Upload-Post (TikTok, Instagram, YouTube, Facebook) |
+| Storyboard and kit | Ollama | OpenAI, Anthropic, Google Gemini and any OpenAI-compatible API (Groq, OpenRouter, DeepSeek…) |
+| Clips | Wan 2.2, LTX-Video, animated photos, your own clips | Pexels, Pixabay, Coverr (free); Google Gemini Omni (Veo's successor in the Gemini API, with sound), WaveSpeed, Seedance, OFox, MuAPI, Metaso, Infistar (paid, with confirmation) |
+| Voice | Edge-TTS, F5-TTS (cloning) | ElevenLabs, OpenAI, Azure, Gemini TTS, SiliconFlow, MiMo, MiniMax, Fish Audio, VoxCPM |
+| Images (cover, first frame, AI photos) | FLUX (Forge) | Nano Banana (Gemini) and any OpenAI-compatible image API |
+| Scene sound | The clip's own sound (AI video with audio, your files) | ElevenLabs sound effects |
+| Music | Your songs in `Drive/music` | ElevenLabs Music |
+| Publishing | — | Upload-Post (TikTok, Instagram, YouTube, Facebook) |
 
-## Montaje
+## Montage
 
-Formatos 9:16, 16:9 y 1:1 · ritmo de cortes y transiciones · subtítulos karaoke, palabra por palabra o por
-frases con tu fuente y colores · gancho en pantalla · velocidad y volumen de la voz · la música baja sola
-cuando habla la voz · hasta 3 variantes. En **📁 Mis reels → Volver a montar** cambias todo eso sin generar
-nada de nuevo.
+9:16, 16:9 and 1:1 · transitions between scenes that start exactly where the next scene's sound starts ·
+karaoke, word-by-word or phrase subtitles with your font and colors · on-screen hook · voice speed and volume ·
+the clips' own sound and the sound effects under the voice · music that ducks while the voice speaks · up to 3
+variants. In **📁 My reels → Re-assemble** you change all of this without generating anything again.
 
-## Si algo se corta o falla
+## If something stops or fails
 
-- **Se cerró la pestaña o se cayó el link:** la producción sigue en segundo plano. Abre el link de nuevo (o
-  pulsa **📡 Ver el progreso en curso**) y vuelves a verla donde va.
-- **Falló un paso** (una clave, un servicio caído, un error de red): pulsa **🔁 Reanudar donde falló**. Cada paso deja su
-  archivo en Drive, así que se reutiliza todo lo que ya salió bien (guion, kit, imágenes, voz, subtítulos,
-  clips ya pagados, música) y se sigue desde el paso que falló. Puedes cambiar el proveedor de ese paso antes
-  de reanudar. En **📁 Mis reels** cada reel muestra ✅ listo, ❌ falló o ⏹ detenido, con el paso en el que quedó.
-- **Producir de nuevo la misma idea** crea otra carpeta (`idea-2`, `idea-3`…): nunca se pisa un reel anterior.
+- **The tab closed or the link dropped:** the job keeps running in the background. Open the link again (or
+  press **📡 Show the job in progress**) and you see it where it is, review panel included.
+- **A step failed** (a key, a service down, a network error): press **🔁 Resume where it failed**. Every step
+  leaves its files in Drive, so everything that went well is reused (storyboard, kit, images, voices, clips
+  already paid, music) and it goes on from the failed step. You can switch that step's provider first.
+- **📁 My reels** shows every reel as ✅ done, 👀 waiting for your review, ❌ failed or ⏹ stopped, with its
+  step. **▶️ Open in «Produce»** shows its review panel or continues it with its own settings.
+- **Producing the same idea again** creates another folder (`idea-2`, `idea-3`…): an earlier reel is never
+  overwritten.
 
-## Reutilizar ajustes
+## Reusing settings
 
-Cada reel guarda en `settings.json` todo lo que elegiste. En **📁 Mis reels**:
-**♻️ Usar estos ajustes** los carga en el formulario y **💾 Guardar preset** los guarda con un nombre. En
-**🎬 Producir reel → 📂 Presets** cargas cualquier preset o guardas los ajustes actuales. Un preset nunca
-trae marcada la confirmación de cobro.
+Every reel saves everything you chose in `settings.json`. In **📁 My reels**, **♻️ Use these settings** loads
+them into the form and **💾 Save preset** stores them under a name. In **⚙️ Settings → 📂 Presets** you load
+any preset or save the current settings. A preset never comes with the charge confirmation ticked.
 
-## Tu carpeta en Drive
+## Your Drive folder
 
 ```
 YT-Channel-Studio/
-├── config/api_keys.toml   tus claves (solo en tu Drive, nunca en este repositorio)
-├── config/presets/        tus presets de ajustes
-├── reels/<idea>/          cada reel: video, variantes, guion, voz, clips, subtítulos, kit, ajustes y estado
-├── music/                 tus canciones (music/ai: las generadas con IA)
-├── footage/               tus clips y fotos para la fuente «Mis clips»
-├── fonts/                 fuentes de subtítulos; agrega las tuyas aquí
-├── voices/                muestras para clonar tu voz
-├── models/                pesos de Ollama, FLUX, Wan, LTX y F5-TTS
-└── code/                  copia del código, por si GitHub no responde
+├── config/api_keys.toml   your keys (only in your Drive, never in this repository)
+├── config/presets/        your settings presets
+├── reels/<idea>/          each reel: plan.json (storyboard + prompts), images/, audio/, clips/, the video and
+│                          its variants, subtitles, kit, settings, review and run state
+├── music/                 your songs (music/ai: the ones made with AI)
+├── footage/               your clips and photos for the «My clips» source
+├── fonts/                 subtitle fonts; add yours here
+├── voices/                samples to clone your voice
+├── models/                Ollama, FLUX, Wan, LTX and F5-TTS weights
+└── code/                  a copy of the code, in case GitHub does not answer
 ```
 
-## Actualizar o fijar una versión
+## Updating or pinning a version
 
-Vuelve a ejecutar la **Celda 1**: trae la última versión sin reiniciar Colab. Para quedarte en una versión
-estable, cambia `VERSION = "main"` por una etiqueta de [Releases](https://github.com/adriexnet/yt-channel-studio/releases),
-por ejemplo `VERSION = "v2.2.0"`. Si una actualización cambia las dependencias de una herramienta, vuelve a
-ejecutar su celda.
+Run **Cell 1** again: it brings the latest version without restarting Colab. To stay on a stable version,
+change `VERSION = "main"` to a tag from [Releases](https://github.com/adriexnet/yt-channel-studio/releases),
+for example `VERSION = "v3.0.0"`. If an update changes a tool's dependencies, run that tool's cell again.
 
-## Desarrollo
+## Development
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
-python -m playwright install --with-deps chromium   # solo para la prueba con navegador
-python -m pytest                                     # todas las pruebas (~4 min, usan ffmpeg real)
-python -m pytest tests/unit                          # solo las rápidas (< 1 s)
-python scripts/build_notebook.py                     # regenera notebook/YT-Channel-Studio.ipynb
+python -m playwright install --with-deps chromium   # only for the browser tests
+python -m pytest                                     # every test (~9 min, real ffmpeg)
+python -m pytest tests/unit                          # only the fast ones (< 1 s)
+python scripts/build_notebook.py                     # rebuilds notebook/YT-Channel-Studio.ipynb
 ```
 
-- `studio/` el paquete: `lib.py` (rutas, claves, proveedores, voces), `pipeline.py` (guion, clips, montaje,
-  publicación), `control_center.py` (interfaz), `setup.py` (celdas 1 y 2), `tools/` (celdas 3 a 6).
-- `tests/` unitarias, de integración (HTTP simulado y ffmpeg real) y de interfaz (Gradio y Chromium).
-- `docs/arquitectura.md` cómo encajan las piezas · `docs/adr/` decisiones de diseño.
+- `studio/` the package: `lib.py` (paths, keys, providers, voices), `storyboard.py` (the storyboard as text and
+  its prompts), `media.py` (word timing, subtitles, scene-by-scene montage), `pipeline.py` (providers and the
+  step-by-step production), `control_center.py` (interface), `jobs.py` (background jobs), `setup.py` (cells 1
+  and 2), `tools/` (cells 3 to 6).
+- `tests/` unit, integration (fake HTTP, real ffmpeg) and interface tests (Gradio and Chromium).
+- `docs/architecture.md` how the pieces fit · `docs/adr/` design decisions.
 
-## Licencia
+## License
 
 [MIT](LICENSE)

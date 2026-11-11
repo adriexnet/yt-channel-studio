@@ -17,7 +17,7 @@ def show():
             url, port, usage = info.get("url", ""), info.get("port", ""), info.get("usage", "")
             if url.startswith("https://"):
                 button = (f'<a href="{url}" target="_blank" style="background:#2563eb;color:white;padding:6px 12px;'
-                          f'border-radius:6px;text-decoration:none;font-weight:bold;display:inline-block;">🔗 Abrir</a>')
+                          f'border-radius:6px;text-decoration:none;font-weight:bold;display:inline-block;">🔗 Open</a>')
             else:
                 button = f"<span>{url}</span>"
             rows += f"""
@@ -30,11 +30,11 @@ def show():
 
         display(HTML(f"""
         <div style="font-family:sans-serif;margin-top:10px;">
-            <h3 style="margin-bottom:8px;">🎛️ YT-Channel-Studio · Links activos</h3>
+            <h3 style="margin-bottom:8px;">🎛️ YT-Channel-Studio · Active links</h3>
             <table style="width:100%;border-collapse:collapse;text-align:left;font-size:14px;">
                 <thead><tr style="background:#1f2937;color:#f9fafb;">
-                    <th style="padding:10px;">Herramienta</th><th style="padding:10px;">Puerto</th>
-                    <th style="padding:10px;">Uso</th><th style="padding:10px;">Acceso</th>
+                    <th style="padding:10px;">Tool</th><th style="padding:10px;">Port</th>
+                    <th style="padding:10px;">Use</th><th style="padding:10px;">Access</th>
                 </tr></thead>
                 <tbody>{rows}</tbody>
             </table>

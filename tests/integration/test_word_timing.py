@@ -1,7 +1,7 @@
 """Word timing: the voice is decoded by ffmpeg (never by PyAV) and Whisper gets the samples directly."""
 import sys, types
 import numpy as np
-import studio.pipeline as P
+import studio.media as P
 
 SCRIPT = "Hola, ¿cómo estás? Muy bien."
 

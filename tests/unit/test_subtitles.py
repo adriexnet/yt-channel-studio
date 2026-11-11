@@ -58,17 +58,7 @@ def test_ass_styles_and_off():
 
 
 def test_montage_options_are_clamped():
-    opt = P.montage_options({"variants": 9, "voice_speed": 5, "aspect": "4:3", "pace": "7", "font_size": "88"})
+    opt = P.montage_options({"variants": 9, "voice_speed": 5, "aspect": "4:3", "pace": "7", "font_size": "88",
+                             "clip_audio": 0, "sound_volume": "0.5"})
     assert opt["variants"] == 3 and opt["voice_speed"] == 2.0 and opt["aspect"] == "9:16"
-    assert opt["pace"] == "auto" and opt["font_size"] == 88
-
-
-def test_cut_planning_covers_the_voice(monkeypatch):
-    durations = {"long.mp4": 6.0, "short.mp4": 3.0}
-    monkeypatch.setattr(P, "media_duration", lambda path: durations[path])
-    segments, transition = P.plan_segments(["long.mp4", "short.mp4", "photo.png"], 9.0, "auto", 0.35, 1.0)
-    covered = sum(s[2] for s in segments) / P.FPS - (len(segments) - 1) * transition
-    assert 9.0 <= covered < 9.2
-    assert segments[0][2] / P.FPS <= 3.4                       # never stretches the 3 s clip into a loop
-    segments, _ = P.plan_segments(["long.mp4"], 9.0, "2", 0.35, 1.0)
-    assert len(segments) == 5 and segments[1][1] > 0           # later cuts start further into the clip
+    assert "pace" not in opt and opt["font_size"] == 88 and opt["clip_audio"] is False and opt["sound_volume"] == 0.5

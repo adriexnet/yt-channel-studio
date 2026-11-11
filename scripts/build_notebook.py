@@ -8,7 +8,7 @@ REPO_URL = "https://github.com/adriexnet/yt-channel-studio.git"
 
 CELL_1 = f'''# Downloads (or updates) the code from GitHub, then connects Google Drive: approve the popup.
 REPO = "{REPO_URL}"
-VERSION = "main"          # a branch or a release tag, e.g. "v2.2.0", to stay on a fixed version
+VERSION = "main"          # a branch or a release tag, e.g. "v3.0.0", to stay on a fixed version
 
 import os, sys, shutil, subprocess, importlib
 CODE = "/content/yt-channel-studio"
@@ -62,8 +62,8 @@ CELLS = [
     ("## 🎙️ Cell 6 · Audio Studio *(optional)*\nTry any voice before using it in a reel. "
      "`f5=False` skips the F5-TTS voice-cloning install.",
      "from studio.tools import audio\naudio.start(f5=True)"),
-    ("## 🚀 Cell 7 · Control Center\nIdea → script → images → voice → clips → music → montage → publishing, "
-     "with live progress, API keys and your saved reels.",
+    ("## 🚀 Cell 7 · Control Center\nIdea → storyboard → images → audio → clips → montage → publishing, "
+     "reviewing each step if you want, with API keys and your saved reels.",
      "from studio import control_center\ncontrol_center.start()"),
     ("## 📋 Cell 8 · Dashboard\nEvery running tool and its public link.",
      "from studio import dashboard\ndashboard.show()"),
