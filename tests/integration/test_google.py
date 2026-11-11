@@ -55,14 +55,17 @@ def test_omni_text_and_image_to_video(gemini, http, tmp_path):
     out = P.generate_ai_video("gemini_omni", "a wolf running", 6.4, "1:1", str(tmp_path / "v.mp4"))
     assert open(out, "rb").read() == b"MP4"
     body = http.last("interactions")["json"]
-    assert body["model"] == "gemini-omni-1.1-flash" and "About 6 seconds" in body["input"]
-    assert body["response_format"] == {"type": "video", "aspect_ratio": "9:16", "resolution": "1080p"}
+    assert body["model"] == "gemini-omni-1.2-flash" and "No subtitles" in body["input"]
+    assert body["response_format"] == {"type": "video", "aspect_ratio": "9:16", "resolution": "1080p",
+                                       "duration": "7s"}                 # whole seconds, rounded up
+    assert P.omni_duration(1.2) == "3s" and P.omni_duration(40) == "15s"   # Omni makes 3 to 15 s
     image = tmp_path / "frame.png"
     image.write_bytes(b"IMG")
     P.generate_ai_video("gemini_omni", "a wolf running", 5, "16:9", str(tmp_path / "w.mp4"), image_path=str(image))
     body = http.last("interactions")["json"]
     assert body["input"][0] == {"type": "image", "data": base64.b64encode(b"IMG").decode(), "mime_type": "image/png"}
     assert body["input"][1]["type"] == "text" and body["response_format"]["aspect_ratio"] == "16:9"
+    assert body["response_format"]["duration"] == "5s"
 
 
 def test_live_model_lists(keys, http):

@@ -117,7 +117,7 @@ DEFAULT_API_KEYS = {
     "openai": {"api_key": "", "chat_model": "gpt-6.1-sol", "tts_model": "tts-1-hd", "tts_voice": "onyx"},
     "anthropic": {"api_key": "", "chat_model": "claude-sonnet-5-5"},
     "gemini": {"api_key": "", "chat_model": "gemini-3.8-flash", "tts_model": "gemini-3.8-flash-tts",
-               "image_model": "gemini-nano-banana-2.1", "video_model": "gemini-omni-1.1-flash",
+               "image_model": "gemini-nano-banana-2.1", "video_model": "gemini-omni-1.2-flash",
                "video_resolution": "720p"},
     # One sub-table per OpenAI-compatible service: [openai_compatible.groq], [openai_compatible.openrouter], ...
     "openai_compatible": {
@@ -692,7 +692,7 @@ CLIP_PROVIDERS = {
     # accepts_image: the clip can start from an image made by your image engine (image-to-video).
     "wan22": dict(type="local_ai", label="Wan 2.2 TI2V-5B", services=["comfy"], accepts_image=True),
     "ltxv": dict(type="local_ai", label="LTX-Video 2B", services=["comfy"], accepts_image=True),
-    "gemini_omni": dict(type="external_ai", label="Google Gemini Omni (Veo's successor, with sound)", creds=["gemini"],
+    "gemini_omni": dict(type="external_ai", label="Google Gemini Omni Flash (Veo's successor, 3-15 s with sound)", creds=["gemini"],
                         accepts_image=True),
     # Text-to-video services: one paid generation per scene (create task -> poll -> download).
     "wavespeed": dict(type="external_ai", label="WaveSpeed AI", creds=["wavespeed"]),
