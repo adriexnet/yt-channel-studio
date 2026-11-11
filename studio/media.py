@@ -83,7 +83,10 @@ def transcribe_words(audio_path, language="en", script=""):
     """Word-level timings on CPU, so Whisper never competes with Forge/ComfyUI for VRAM."""
     if "small" not in _WHISPER:
         from faster_whisper import WhisperModel
-        _WHISPER["small"] = WhisperModel("small", device="cpu", compute_type="int8", download_root=TTS_MODELS_DIR)
+        # Local disk, not Drive: the Hugging Face download it makes relies on symlinks, which Drive lacks, and a
+        # copy saved there came back unreadable ("Unsupported model binary version"). It is 0.5 GB, quick to fetch.
+        _WHISPER["small"] = WhisperModel("small", device="cpu", compute_type="int8",
+                                         download_root=f"{LOCAL_MODELS_DIR}/whisper")
     segments, _ = _WHISPER["small"].transcribe(load_audio_16k(audio_path), language=language or None,
                                                vad_filter=True, word_timestamps=True,
                                                initial_prompt=script[:400] or None)
