@@ -61,6 +61,8 @@ def start(models=None):
     os.environ["OLLAMA_MODELS"] = f"{MODELS_DIR}/ollama"   # model weights persist in Drive
     os.environ["OLLAMA_HOST"] = f"0.0.0.0:{PORTS['ollama_api']}"
     if shutil.which("ollama") is None:
+        if shutil.which("zstd") is None:   # the Ollama installer extracts a .tar.zst; Colab does not ship zstd
+            run("apt-get -qq install -y zstd || (apt-get -qq update && apt-get -qq install -y zstd)", "Installing zstd...")
         run("curl -fsSL https://ollama.com/install.sh | sh", "Installing Ollama...")
     subprocess.run(["killall", "-9", "ollama"], stderr=subprocess.DEVNULL)
     proc = start_background(["ollama", "serve"], OLLAMA_LOG)
