@@ -15,7 +15,10 @@ WORDS_PER_SECOND = 2.4          # spoken words per second, to estimate lengths b
 SILENT_SECONDS = 3.0            # default length of a scene without narration
 PROMPT_FIELDS = ("image_prompt", "motion_prompt", "search_query", "sound_prompt")
 STORY_FIELDS = ("title", "visual", "narration", "sound", "duration")
-FORMAT_WORDS = {"9:16": "vertical 9:16", "16:9": "horizontal 16:9", "1:1": "square 1:1"}
+# No "9:16"-style ratios: in a FLUX prompt sent through Forge they turn the image into noise. The image size
+# already sets the shape.
+FORMAT_WORDS = {"9:16": "vertical portrait composition", "16:9": "horizontal wide composition",
+                "1:1": "square composition"}
 
 STYLE_GUIDES = {
     "auto": "Choose the format that fits the idea best (narrated, top list, story, POV, tutorial...).",
@@ -50,7 +53,7 @@ def build_storyboard_prompt(num_scenes="auto", duration=35, tone="auto", instruc
     """System prompt of the storyboard. The idea (and, when regenerating, the previous storyboard and the
     requested changes) goes in the user message."""
     words = int(duration * WORDS_PER_SECOND)
-    shape = FORMAT_WORDS.get(aspect, "vertical 9:16")
+    shape = FORMAT_WORDS.get(aspect, FORMAT_WORDS["9:16"])
     look = "photorealistic" if style in PHOTOREAL_STYLES else "in the chosen visual style"
     tone_text = "the one that fits the idea and the style best" if tone in ("auto", "", None) else TONES.get(tone, tone)
     scenes = _scene_count(num_scenes, duration)
@@ -110,7 +113,7 @@ def storyboard_request(idea, previous_text="", notes=""):
 
 def build_scene_prompts_prompt(aspect="9:16", style="auto"):
     """System prompt that writes the English prompts of some scenes from the storyboard as it was edited."""
-    shape = FORMAT_WORDS.get(aspect, "vertical 9:16")
+    shape = FORMAT_WORDS.get(aspect, FORMAT_WORDS["9:16"])
     look = "photorealistic" if style in PHOTOREAL_STYLES else "in the chosen visual style"
     return f"""You turn a reel's storyboard into prompts for AI tools. Answer ONLY with valid JSON:
 {{"scenes": [{{"id": 1, "image_prompt": "detailed English prompt for image generation, {shape}, {look}",
