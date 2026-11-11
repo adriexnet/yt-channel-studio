@@ -30,7 +30,7 @@ def origin(tmp_path):
 
 def run_cell_1(tmp_path, repo_url, version="main"):
     nb = json.load(open(f"{ROOT}/notebook/YT-Channel-Studio.ipynb"))
-    code = "".join(nb["cells"][1]["source"])
+    code = "".join(next(c for c in nb["cells"] if c["metadata"]["id"] == "code_cell_1")["source"])
     code = code.replace('REPO = "https://github.com/adriexnet/yt-channel-studio.git"', f'REPO = "{repo_url}"')
     code = code.replace('VERSION = "main"', f'VERSION = "{version}"')
     code = code.replace('CODE = "/content/yt-channel-studio"', f'CODE = "{tmp_path}/code"')

@@ -502,7 +502,7 @@ def register_tool_link(name, usage, port, url):
         json.dump(data, f, indent=2)
 
 
-def start_cloudflare_tunnel(port, log_name, tool_name=None, tool_usage=""):
+def start_cloudflare_tunnel(port, log_name, tool_name=None, tool_usage="", wait=False):
     log_file = log_path(log_name)
     if os.path.exists(log_file):
         os.remove(log_file)
@@ -515,9 +515,26 @@ def start_cloudflare_tunnel(port, log_name, tool_name=None, tool_usage=""):
         if urls:
             url = urls[0]
             break
+    if wait and is_public_url(url):          # only the link the user opens first; the tool links answer meanwhile
+        wait_for_public_link(url)
     if tool_name:
         register_tool_link(tool_name, tool_usage, port, url)
     return url
+
+
+def wait_for_public_link(url, timeout=90):
+    """A new trycloudflare link takes up to a minute to answer: waits for it, so the link printed by the cell
+    opens at the first click. Returns False when it still does not answer (the link is printed anyway)."""
+    import requests
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if requests.get(url, timeout=5).status_code < 500:
+                return True
+        except requests.RequestException:
+            pass
+        time.sleep(3)
+    return False
 
 
 def launch_gradio(blocks, port, css=None):

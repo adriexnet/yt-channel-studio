@@ -87,7 +87,9 @@ def list_llm_models(provider_key):
 def llm_complete(provider_key, model, system_prompt, user_prompt, json_mode=True):
     """Unified chat completion. Returns the raw text answer."""
     if provider_key == "ollama":
-        payload = {"model": model, "stream": False, "keep_alive": 0,   # free VRAM for Forge/ComfyUI afterwards
+        # num_predict: in JSON mode a local model can fall into an endless run of blank space and hold the reel
+        # until the timeout; a cap ends it. keep_alive 0 frees the VRAM for Forge/ComfyUI afterwards.
+        payload = {"model": model, "stream": False, "keep_alive": 0, "options": {"num_predict": 4096},
                    "messages": [{"role": "system", "content": system_prompt},
                                 {"role": "user", "content": user_prompt}]}
         if json_mode:
@@ -1384,8 +1386,9 @@ class Production:
         run.set("Applying your storyboard", 5)
         parsed = parse_storyboard(text)
         plan, changed = apply_storyboard(self.plan, parsed)
+        changed = sorted(set(changed) | set(scenes_to_translate(plan)))      # a prompt not in English is redone
         if changed:
-            run.log(f"Writing new prompts for the edited scene(s): {', '.join(map(str, changed))}...")
+            run.log(f"Writing the English prompts of scene(s): {', '.join(map(str, changed))}...")
             yield run.snapshot()
             yield from _wait_for(run, lambda: write_scene_prompts(plan, changed, self.llm_key, self.model,
                                                                   self.aspect, self.s.get("style", "auto")))

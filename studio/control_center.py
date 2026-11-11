@@ -728,7 +728,7 @@ def no_change(message=None, failed=False):
 
 def new_reel_ui():
     """«New reel»: the composer comes back; the finished or paused reel stays in «My reels»."""
-    return pack({"progress": progress_bar_html(), "step": "", "stepper": "", "video": None, "variants": None,
+    return pack({"progress": "", "step": "", "stepper": "", "video": None, "variants": None,
                  "reel": None, "review": None, "panel": gr.update(visible=False), "final": gr.update(visible=False),
                  "composer": gr.update(visible=True), "summary": gr.update(visible=False), "summary_text": "",
                  "results_choice": gr.update(choices=[], value=None), "results_col": gr.update(visible=False)})
@@ -749,7 +749,25 @@ def start_job_ui(kind, label, factory):
     yield from follow_ui(job)
 
 
+def poll_ui():
+    """A short request every few seconds with the running job's progress. A tunnel that holds back the live
+    stream (Cloudflare quick tunnels do) then still shows the stage, the step bar and the log as they move;
+    the stream brings the rest (review panel, results, video) when the step ends."""
+    job = jobs.current()
+    snap = job.snapshot if job is not None and job.running else None
+    if not snap:
+        return gr.update(), gr.update(), gr.update(), gr.update()
+    hint = ("<br><span class='hint'>You can close this tab: the job keeps running in Colab and this page "
+            "shows it again when you come back.</span>")
+    return (progress_bar_html(stage_label(snap), snap["pct"], snap["failed"], snap["done"], bool(snap.get("review"))),
+            step_html(current_step(snap["log"], snap["failed"]) + hint), stepper_html(step_states(snap)),
+            snap["tech"])
+
+
 def produce_ui(*values):
+    if not (form_settings(values).get("idea") or "").strip():      # nothing starts, so nothing shows as failed
+        yield no_change("Write an idea for the reel first.", failed=True)
+        return
     # Instant feedback: if even this does not show up, the problem is the connection to the UI, not the pipeline.
     yield pack(dict(zip(["review", "panel", "title", "storyboard_box", "storyboard_text", "items_box"],
                         review_updates(None)),
@@ -1140,7 +1158,7 @@ def build_ui():
                     with gr.Row(equal_height=False, elem_classes=["workspace"]):
                         # ------------------------------------------- the step at hand (one panel at a time)
                         with gr.Column(scale=3, min_width=360, elem_classes=["active"]):
-                            progress_box = gr.HTML(progress_bar_html())
+                            progress_box = gr.HTML()
                             step_md = gr.HTML()
                             with gr.Row(elem_classes=["actions"]):
                                 stop_btn = gr.Button("⏹ Stop", size="sm")
@@ -1518,6 +1536,10 @@ def build_ui():
         attach_btn.click(attach_ui, None, production_outputs, concurrency_limit=None)
         control_center.load(attach_ui, None, production_outputs, concurrency_limit=None)   # page reopened: reconnect
         stop_btn.click(stop_ui, None, progress_box)
+        gr.Timer(3).tick(poll_ui, None, [progress_box, step_md, stepper_out, tech_out], show_progress="hidden",
+                         concurrency_limit=None)
+        # A tool started after this page opened (Cell 3, 4 or 5) turns its warning off without a reload.
+        gr.Timer(20).tick(validate, check_inputs, status_box, show_progress="hidden", concurrency_limit=None)
         confirm_storyboard_btn.click(confirm_ui, [reel_state, storyboard_tb], production_outputs, concurrency_limit=None)
         regen_storyboard_btn.click(regenerate_storyboard_ui, [reel_state, notes_tb, storyboard_tb], production_outputs,
                                    concurrency_limit=None)
@@ -1623,7 +1645,7 @@ def start():
     blocks, _ = build_ui()
     launch_gradio(blocks, PORTS["control_center"], css=UI_CSS)
     url = start_cloudflare_tunnel(PORTS["control_center"], "control_center_tunnel", "Control Center",
-                                  "Type an idea, review each step, and the reel is saved in Drive")
+                                  "Type an idea, review each step, and the reel is saved in Drive", wait=True)
     tools = "Tools running: " + ", ".join(
         f"{'🟢' if service_ready(name) else '⚪'} {svc['label']}" for name, svc in SERVICES.items())
     problems = [] if is_public_url(url) else [f"No public link yet: {url}"]

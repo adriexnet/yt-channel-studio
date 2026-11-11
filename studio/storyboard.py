@@ -272,6 +272,24 @@ def apply_storyboard(plan, parsed):
     return new, changed
 
 
+ENGLISH_WORDS = {"the", "of", "with", "and", "at", "is", "an", "its", "from", "by", "on", "under", "against"}
+
+
+def looks_english(text):
+    """False for a prompt a local model wrote in the idea's language (FLUX and Wan follow English far better).
+    A cheap check: no accented letters, and at least one everyday English word in a prompt of 5+ words."""
+    words = re.findall(r"[^\W\d_]+", (text or "").lower())
+    if any(ord(ch) > 127 for word in words for ch in word):
+        return False
+    return len(words) < 5 or bool(ENGLISH_WORDS & set(words))
+
+
+def scenes_to_translate(plan):
+    """Ids of the scenes whose image or motion prompt is not in English."""
+    return [s["id"] for s in plan.get("scenes", [])
+            if not (looks_english(s.get("image_prompt")) and looks_english(s.get("motion_prompt")))]
+
+
 def merge_scene_prompts(plan, answer):
     """Puts the prompts the model wrote ({"scenes": [{id, image_prompt, ...}]}) into the plan."""
     by_id = {int(s.get("id", 0)): s for s in (answer or {}).get("scenes", []) if str(s.get("id", "")).isdigit()}
