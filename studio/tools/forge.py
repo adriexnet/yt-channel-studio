@@ -5,7 +5,7 @@ FORGE_DIR = f"{APPS_DIR}/stable-diffusion-webui-forge"
 FORGE_LOG = log_path("forge_server")
 CLIP_ZIP = "https://github.com/openai/CLIP/archive/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1.zip"
 
-FLUX_MODELS = {   # name -> (url, Drive sub-folder, file name)
+FLUX_MODELS = {   # name -> (url, sub-folder of LOCAL_MODELS_DIR, file name)
     "flux_dev": ("https://huggingface.co/Comfy-Org/flux1-dev/resolve/main/flux1-dev-fp8.safetensors", "unet", "flux1-dev-fp8.safetensors"),
     "flux_fill": ("https://huggingface.co/YarvixPA/FLUX.1-Fill-dev-GGUF/resolve/main/flux1-fill-dev-Q8_0.gguf", "unet", "flux1-fill-dev-Q8_0.gguf"),
     "flux_vae": ("https://huggingface.co/Comfy-Org/Lumina_Image_2.0_Repackaged/resolve/main/split_files/vae/ae.safetensors", "vae", "ae.safetensors"),
@@ -13,7 +13,7 @@ FLUX_MODELS = {   # name -> (url, Drive sub-folder, file name)
     "t5xxl": ("https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn.safetensors", "clip", "t5xxl_fp8_e4m3fn.safetensors"),
     "qwen_edit": ("https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_edit_fp8_e4m3fn.safetensors", "qwen_edit", "qwen_image_edit.safetensors"),
 }
-DEFAULT_MODELS = list(FLUX_MODELS)
+DEFAULT_MODELS = ["flux_dev"]   # the only one the studio uses: it already holds the VAE and text encoders
 
 
 def install(forge_python):
@@ -72,12 +72,12 @@ def start(models=None):
     print(f"numpy / scikit-image / OpenCV: {info}")
     check_torch(forge_python, "Forge")
 
-    for name in models:                                   # skipped when already in Drive
+    for name in models:                                   # local disk, downloaded when this cell runs
         url, subdir, filename = FLUX_MODELS[name]
-        download_if_missing(url, f"{MODELS_DIR}/{subdir}", filename)
-    link_models(f"{MODELS_DIR}/unet", f"{FORGE_DIR}/models/Stable-diffusion")
-    link_models(f"{MODELS_DIR}/vae", f"{FORGE_DIR}/models/VAE")
-    link_models(f"{MODELS_DIR}/clip", f"{FORGE_DIR}/models/text_encoder")
+        download_if_missing(url, f"{LOCAL_MODELS_DIR}/{subdir}", filename)
+    link_models(f"{LOCAL_MODELS_DIR}/unet", f"{FORGE_DIR}/models/Stable-diffusion")
+    link_models(f"{LOCAL_MODELS_DIR}/vae", f"{FORGE_DIR}/models/VAE")
+    link_models(f"{LOCAL_MODELS_DIR}/clip", f"{FORGE_DIR}/models/text_encoder")
 
     print("Starting Forge WebUI...")
     kill_port(PORTS["forge"])

@@ -50,15 +50,16 @@ CELLS = [
     ("## 📦 Cell 2 · Environment\nSystem tools, cloudflared, uv, the notebook packages and the subtitle fonts. "
      "Without a GPU it tells you what is unavailable instead of stopping.",
      "from studio import setup\nsetup.environment()"),
-    ("## 🧠 Cell 3 · Ollama *(optional)*\nLocal LLMs (downloaded to the local disk when this cell runs) + chat UI."
+    ("## 🧠 Cell 3 · Ollama *(optional)*\nLocal LLMs (downloaded to the local disk when this cell runs) + chat UI. "
      "Skip it if you use an external LLM.",
      'from studio.tools import ollama\nollama.start(models=["qwen2.5:14b", "deepseek-r1:14b"])'),
     ("## 🎨 Cell 4 · Forge WebUI *(optional)*\nFLUX images in a Python 3.10 venv: local covers, base images "
-     "and AI photos.",
+     "and AI photos. Its models download to the local disk when this cell runs.",
      "from studio.tools import forge\n"
-     "forge.start()   # models: flux_dev, flux_fill, flux_vae, clip_l, t5xxl, qwen_edit (all by default)"),
-    ("## 🎬 Cell 5 · ComfyUI *(optional)*\nLocal AI video (Wan 2.2 / LTX-Video) in a Python 3.11 venv.",
-     'from studio.tools import comfyui\ncomfyui.start(models=["wan22", "ltxv"])'),
+     "forge.start()   # flux_dev by default; also: flux_fill, flux_vae, clip_l, t5xxl, qwen_edit"),
+    ("## 🎬 Cell 5 · ComfyUI *(optional)*\nLocal AI video (Wan 2.2 / LTX-Video) in a Python 3.11 venv. "
+     "Only the models you list download, to the local disk, when this cell runs.",
+     'from studio.tools import comfyui\ncomfyui.start(models=["wan22"])   # add "ltxv" for LTX-Video'),
     ("## 🎙️ Cell 6 · Audio Studio *(optional)*\nTry any voice before using it in a reel. "
      "`f5=False` skips the F5-TTS voice-cloning install.",
      "from studio.tools import audio\naudio.start(f5=True)"),
