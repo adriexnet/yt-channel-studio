@@ -11,9 +11,7 @@ FORM = ["idea_in", "duration_sl", "style_rd", "tone_dd", "instructions_in", "sce
         "image_rd", "cover_cb", "keyframes_cb", "clip_type_rd", "clip_dd", "paid_cb", "own_files_in",
         "voice_type_rd", "voice_provider_dd", "voice_dd", "clone_in", "sound_rd", "music_rd", "kit_cb", "review_cb",
         "ai_w", "ai_h", "ai_f", "ai_s"]
-OUT = {name: i for i, name in enumerate(
-    ["progress", "step", "storyboard", "gallery", "video", "variants"] + [f"kit{i}" for i in range(7)] +
-    ["tech", "reel", "review", "panel", "title", "storyboard_box", "storyboard_text", "items_box"])}
+OUT = CC.OUT
 
 
 @pytest.fixture(scope="module")
@@ -43,8 +41,10 @@ def test_layout(ui):
     assert c["montage_inputs"][0] is c["aspect_rd"]           # the format picker IS the montage format
     assert "Anton" in CC.FONTS and c["prefs"]["montage"]["font"] == "Anton"
     assert c["review_cb"].value is True and c["sound_rd"].value == "none" and c["ai_f"].value == 121
-    assert c["review_panel"].visible is False
-    for window in ("llm_modal", "image_modal", "voice_modal", "video_modal", "format_modal", "duration_modal",
+    assert c["review_panel"].visible is False and c["final_section"].visible is False
+    assert c["results_col"].visible is False and c["summary_box"].visible is False and c["composer_box"].visible
+    assert c["publish_inputs"][0].value == [] and c["publish_inputs"][3].value == "private"   # nothing posts by itself
+    for window in ("detail_modal", "llm_modal", "image_modal", "voice_modal", "video_modal", "format_modal", "duration_modal",
                    "style_modal", "settings_modal"):
         assert c[window].visible is False                     # every window starts closed
 
@@ -138,6 +138,8 @@ def test_production_wrapper(ui, monkeypatch):
     assert last[OUT["tech"]] == "TECH" and last[OUT["reel"]] == "/reels/x"
     assert last[OUT["kit0"]]["value"] == "Título" and "(6/100)" in last[OUT["kit0"]]["label"]
     assert last[OUT["panel"]]["visible"] is False
+    assert last[OUT["final"]]["visible"] is True and last[OUT["composer"]]["visible"] is False
+    assert "step-review" in last[OUT["stepper"]] and last[OUT["stepper"]].count("step-done") == 5
     prefs = json.load(open(CC.PREFS_FILE))
     assert prefs["montage"]["variants"] == 2 and prefs["style"] == "animated" and prefs["scene_sound"] == "elevenlabs"
 
@@ -406,6 +408,17 @@ def test_opens_in_a_browser_and_reviews_items_one_by_one(ui, monkeypatch, tmp_pa
         page.locator("button.send").click()
         page.wait_for_selector("button.regen", timeout=20000)
         assert page.locator("button.regen").count() == 2 and "Review the images" in page.inner_text(".review")
+        assert "Images" in page.inner_text(".stepper") and page.locator(".stepper .step-review").count() == 1
+        assert page.locator(".final").first.is_hidden()                      # the reel and publishing come last
+        page.locator(".review button.view").first.click()                   # 🔍 opens the item in detail
+        page.wait_for_selector(".detail-modal .detail-card", state="visible", timeout=10000)
+        assert "1 of 2" in page.inner_text(".detail-card")
+        page.get_by_role("button", name="Next →").click()
+        page.wait_for_function("() => document.querySelector('.detail-card').innerText.includes('2 of 2')",
+                               timeout=10000)
+        page.screenshot(path=str(tmp_path / "detail.png"))
+        page.get_by_role("button", name="✕ Close").click()
+        page.wait_for_selector(".detail-modal .detail-card", state="hidden", timeout=10000)
         box = page.get_by_label("Image prompt").nth(1)
         box.fill("a blue whale")
         page.get_by_role("button", name="🔄 Regenerate scene2_image").click()
@@ -423,3 +436,66 @@ def test_opens_in_a_browser_and_reviews_items_one_by_one(ui, monkeypatch, tmp_pa
     assert calls[:2] == [("scene2_image", "a blue whale"), ("scene1_image", "prompt 1")]
     assert calls[2] == ("confirm", reel)
     assert not errors
+
+
+def test_the_step_bar_follows_the_pipeline():
+    assert CC.step_of("Writing the storyboard") == "storyboard" and CC.step_of("Image 3/5") == "images"
+    assert CC.step_of("Timing the words 2/5") == "audio" and CC.step_of("Clip 1/5") == "clips"
+    assert CC.step_of("Scene 2/5: picture and sound") == "montage" and CC.step_of("Error in: Clip 4/5") == "clips"
+    assert CC.step_of("Regenerating scene2_image") == "images" and CC.step_of("cover regenerated") == "images"
+    assert CC.step_of("Publish kit") == "images" and CC.step_of("Stopped by you") is None
+    states = CC.step_states(snapshot(stage="Clip 2/5", reel_dir="/reels/x"))
+    assert [states[k] for k, _ in CC.STEPS] == ["done", "done", "done", "running", "todo", "todo"]
+    states = CC.step_states(snapshot(stage="Review the audio", review=AUDIO_REVIEW, reel_dir="/reels/x"))
+    assert states["audio"] == "review" and states["images"] == "done"
+    assert CC.step_states(snapshot(stage="Error in: Voice 1/3", failed=True, reel_dir="/r"))["audio"] == "failed"
+    assert CC.done_steps(states) == [("Storyboard", "storyboard"), ("Images", "images")]
+    assert CC.step_states(None) == {} and CC.stepper_html({}) == ""
+
+
+def test_a_long_wait_shows_its_time():
+    assert CC.stage_label(snapshot(stage="Writing the storyboard", since=135)) == \
+        "Writing the storyboard · 2:15 on this step"
+    assert CC.stage_label(snapshot(stage="Writing the storyboard", since=2)) == "Writing the storyboard"
+    assert CC.stage_label(snapshot(stage="Review the audio", review=AUDIO_REVIEW, since=300)) == "Review the audio"
+
+
+def test_earlier_results_and_the_detail_window(saved_reel):
+    ffmpeg("-f", "lavfi", "-i", "color=c=red:s=64x64", "-frames:v", "1", f"{saved_reel}/images/scene_01.png")
+    scenes = CC.step_items(saved_reel, "storyboard")
+    assert scenes[0]["label"] == "Scene 1 · Uno" and scenes[0]["text"] == "Hola perro"
+    assert scenes[0]["kind"] == "image" and "Un perro" in scenes[0]["extra"]
+    assert [i["kind"] for i in CC.step_items(saved_reel, "montage")] == ["video"]
+    assert CC.step_items(None, "images") == []
+    items = [{"id": "a", "label": "A", "kind": "image", "path": "/a.png", "text": "pa", "text_label": "Prompt"},
+             {"id": "b", "label": "B", "kind": "video", "path": "/b.mp4", "text": "pb", "text_label": "Motion"}]
+    state, window, title, image, video, audio, text, prev, nxt = CC.detail_updates(items, 0)
+    assert window["visible"] and image["visible"] and not video["visible"] and "1 of 2" in title["value"]
+    assert "pa" in text["value"] and prev["interactive"] is False and nxt["interactive"] is True
+    state, window, title, image, video, *_ = CC.detail_step(state, 1)
+    assert state["index"] == 1 and video["visible"] and video["value"] == "/b.mp4" and not image["visible"]
+    assert CC.detail_step(state, 5)[0]["index"] == 1                         # never past the last item
+    closed = CC.close_detail()
+    assert closed[0] is None and closed[1]["visible"] is False and closed[4]["value"] is None
+
+
+def test_regenerate_selected_runs_each_item(monkeypatch):
+    calls = []
+
+    def fake_item(reel_dir, item_id, text=None):
+        calls.append((item_id, text))
+        yield snapshot(review=AUDIO_REVIEW, reel_dir=reel_dir)
+    monkeypatch.setattr(CC, "regenerate_item", fake_item)
+    list(CC.regenerate_many_ui(L.REELS_DIR, [("scene1_audio", "uno"), ("scene3_audio", "tres")]))
+    assert calls == [("scene1_audio", "uno"), ("scene3_audio", "tres")]
+    assert "Select at least one" in list(CC.regenerate_many_ui(L.REELS_DIR, []))[-1][0]
+
+
+def test_new_reel_brings_the_composer_back():
+    out = CC.new_reel_ui()
+    assert out[OUT["composer"]]["visible"] and not out[OUT["summary"]]["visible"]
+    assert not out[OUT["final"]]["visible"] and out[OUT["reel"]] is None and out[OUT["stepper"]] == ""
+
+
+def test_publishing_needs_a_platform(saved_reel):
+    assert "at least one platform" in list(CC.publish_ui(saved_reel, [], "", "UTC", "private", "SELF_ONLY", True))[-1]

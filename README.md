@@ -40,7 +40,7 @@ The reel is made step by step, and with **👀 Review each step** on (the defaul
 5. **Assembly.** Each scene is built with its own sound before the scenes are joined, so a picture never
    drifts from the sound it belongs to; the music goes over the whole reel and ducks under the voice.
 
-Under the progress bar you see the current step; **🔧 Show the technical log** opens the full detail.
+A bar of steps on top shows where the reel is, and only the panel of the step at hand is open. The results of the finished steps stay beside it while the next one works, and **🔍 View** opens any image, voice or clip in a detail window. In a review, tick several items and press **🔄 Regenerate selected** to redo them in one go. Under the progress bar you see the current step and how long it has been on it; **🔧 Show the technical log** opens the full detail. The finished reel, its kit and publishing come last, with no platform ticked and private visibility by default.
 Everything (video, storyboard, voices, clips, kit, settings) is saved in your Drive under `YT-Channel-Studio/reels/`.
 
 ## The cells

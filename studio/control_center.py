@@ -1,9 +1,12 @@
 """Cell 7: the Control Center. A simple composer (idea, length, format and one engine per kind of content) with
 every advanced option in a settings window that only shows what applies to the current choice.
 
-A reel is made step by step: storyboard -> images -> audio -> clips -> assembly. With «Review each step» on, it
-pauses after every step: the storyboard is editable text (edit it, or regenerate it with notes), and every
-image, voice, sound and clip is listed scene by scene with its own prompt and its own «Regenerate» button.
+A reel is made step by step: storyboard -> images -> audio -> clips -> assembly. A bar of steps shows where it is,
+and only the panel of the step at hand is open; the results of the finished steps stay readable beside it, and
+any item opens in a detail window. With «Review each step» on, it pauses after every step: the storyboard is
+editable text (edit it, or regenerate it with notes), and every image, voice, sound and clip is a card with its
+own prompt, its own «Regenerate» and a tick for «Regenerate selected». The finished reel, its kit and publishing
+come last, with no platform ticked.
 Jobs run in the background (the page only watches them), so a disconnection loses nothing; failed reels resume
 from the failed step; any reel's settings or a saved preset can be reused. Also: API keys, saved reels,
 re-assembly and publishing."""
@@ -116,6 +119,180 @@ def current_step(log, failed=False):
 
 def step_html(text):
     return f"<div class='step-line'>{text}</div>" if text else ""
+
+
+def clock(seconds):
+    seconds = int(seconds or 0)
+    return f"{seconds // 60}:{seconds % 60:02d}"
+
+
+def stage_label(snap):
+    """The stage, plus how long it has been on it while a step runs, so a long wait (a model loading) never
+    looks like a frozen page."""
+    stage = snap.get("stage") or "Waiting"
+    running = not (snap.get("failed") or snap.get("done") or snap.get("review"))
+    since = snap.get("since") or 0
+    return f"{stage} · {clock(since)} on this step" if running and since >= 5 else stage
+
+
+# ---------------------------------------------------------------------------
+# Steps: one bar on top, one panel for the step at hand, earlier results beside it
+# ---------------------------------------------------------------------------
+STEPS = [("storyboard", "Storyboard"), ("images", "Images"), ("audio", "Audio"), ("clips", "Clips"),
+         ("montage", "Montage"), ("publish", "Publish")]
+STEP_LABELS = dict(STEPS)
+STEP_OF_STAGE = [   # (start of the stage the pipeline reports, step it belongs to)
+    ("Checking", "storyboard"), ("Preparing", "storyboard"), ("Starting", "storyboard"),
+    ("Writing the storyboard", "storyboard"), ("Applying your storyboard", "storyboard"),
+    ("Storyboard", "storyboard"), ("Review the storyboard", "storyboard"), ("Publish kit", "images"),
+    ("Cover", "images"), ("Image", "images"), ("Review the images", "images"),
+    ("Voice", "audio"), ("Timing the words", "audio"), ("Sound", "audio"), ("Review the audio", "audio"),
+    ("Clip", "clips"), ("Review the clips", "clips"),
+    ("AI music", "montage"), ("Timing the subtitles", "montage"), ("Scene ", "montage"), ("Variant", "montage"),
+]
+ITEM_STEPS = {"image": "images", "cover": "images", "audio": "audio", "sound": "audio", "clip": "clips"}
+
+
+def step_of(stage):
+    """The step a pipeline stage belongs to, or None when the stage does not say (Stopped, Internal error)."""
+    stage = re.sub(r"^Error in: ", "", stage or "")
+    item = re.search(r"\bscene\d+_(image|audio|sound|clip)\b|\bcover\b", stage)
+    if item:
+        return ITEM_STEPS[item.group(1) or "cover"]
+    for start, step in STEP_OF_STAGE:
+        if stage.startswith(start):
+            return step
+    return None
+
+
+def step_states(snap):
+    """{step: 'done' | 'running' | 'review' | 'failed' | 'todo'} for a snapshot (None: nothing started)."""
+    if not snap or not (snap.get("reel_dir") or snap.get("stage")):
+        return {}
+    if snap.get("done"):
+        return {key: ("review" if key == "publish" else "done") for key, _ in STEPS}
+    current = step_of(snap.get("stage"))
+    if snap.get("review"):
+        current = snap["review"].get("stage") or current
+    if current is None and snap.get("reel_dir"):
+        current = step_of(read_run_state(snap["reel_dir"]).get("stage")) or \
+            read_run_state(snap["reel_dir"]).get("stage")
+    if current not in STEP_LABELS:
+        current = "storyboard"
+    status = "failed" if snap.get("failed") else ("review" if snap.get("review") else "running")
+    order = [key for key, _ in STEPS]
+    at = order.index(current)
+    return {key: ("done" if i < at else (status if i == at else "todo")) for i, key in enumerate(order)}
+
+
+STEP_MARKS = {"done": "✓", "running": "…", "review": "!", "failed": "✕"}
+
+
+def stepper_html(states):
+    if not states:
+        return ""
+    chips = []
+    for i, (key, label) in enumerate(STEPS, 1):
+        state = states.get(key, "todo")
+        current = " aria-current='step'" if state in ("running", "review", "failed") else ""
+        chips.append(f"<li class='step step-{state}'{current}><span class='step-dot' aria-hidden='true'>"
+                     f"{STEP_MARKS.get(state, i)}</span>{label}</li>")
+    return f"<ol class='stepper' aria-label='Steps'>{''.join(chips)}</ol>"
+
+
+def done_steps(states):
+    """Finished steps that have something to look at, in order (the earlier-results picker)."""
+    return [(STEP_LABELS[key], key) for key, _ in STEPS if states.get(key) == "done" and key != "publish"]
+
+
+def summary_html(reel_dir):
+    """The composer folded into one line once a reel is under way."""
+    if not reel_dir:
+        return ""
+    idea = load_settings(reel_dir).get("idea") or os.path.basename(reel_dir).replace("-", " ")
+    return (f"<div class='summary'><div class='summary-idea'>{html.escape(idea)}</div>"
+            f"<div class='summary-folder'>Drive › reels › {html.escape(os.path.basename(reel_dir))}</div></div>")
+
+
+# ---------------------------------------------------------------------------
+# What a finished step made, and the window that shows one item in detail
+# ---------------------------------------------------------------------------
+def final_videos(reel_dir):
+    return sorted(glob.glob(f"{reel_dir}/*_FINAL*.mp4")) if reel_dir else []
+
+
+def step_items(reel_dir, step):
+    """The items of a finished step, shaped like the review items ({id, label, kind, path, text, text_label})."""
+    if not reel_dir or not os.path.isdir(reel_dir):
+        return []
+    if step == "storyboard":
+        plan = load_plan(reel_dir) or {}
+        items = []
+        for s in plan.get("scenes", []):
+            image = scene_image(reel_dir, s["id"])
+            details = [f"**Visual:** {s.get('visual', '')}", f"**Sound:** {s.get('sound', '') or '—'}"]
+            if s.get("image_prompt"):
+                details.append(f"**Image prompt:** {s['image_prompt']}")
+            items.append(dict(id=f"scene{s['id']}", label=f"Scene {s['id']} · {s.get('title', '')}",
+                              kind="image" if os.path.exists(image) else "text",
+                              path=image if os.path.exists(image) else None,
+                              text=s.get("narration") or "—", text_label="Narration",
+                              extra="\n\n".join(details)))
+        return items
+    if step == "montage":
+        return [dict(id=os.path.basename(v), label=os.path.basename(v), kind="video", path=v, text="",
+                     text_label="") for v in final_videos(reel_dir)]
+    return review_items(reel_dir, step)
+
+
+DETAIL_COUNT = 9     # see detail_updates
+
+
+def detail_updates(items, index):
+    """(state, window, title, image, video, audio, text, previous, next) for item `index` of `items`."""
+    if not items:
+        return (None, gr.update(visible=False)) + tuple(gr.update() for _ in range(DETAIL_COUNT - 2))
+    index = max(0, min(index, len(items) - 1))
+    item = items[index]
+    kind, path = item.get("kind"), item.get("path")
+    text = ""
+    if item.get("text"):
+        text = f"**{item.get('text_label') or 'Text'}**\n\n{item['text']}"
+    if item.get("extra"):
+        text += ("\n\n" if text else "") + item["extra"]
+    return ({"items": items, "index": index}, gr.update(visible=True),
+            gr.update(value=f"### {item.get('label', '')}\n{index + 1} of {len(items)}"),
+            gr.update(value=path if kind == "image" else None, visible=kind == "image"),
+            gr.update(value=path if kind == "video" else None, visible=kind == "video"),
+            gr.update(value=path if kind == "audio" and path else None, visible=kind == "audio" and bool(path)),
+            gr.update(value=text or "*(nothing to show)*"),
+            gr.update(interactive=index > 0), gr.update(interactive=index < len(items) - 1))
+
+
+def detail_step(state, delta):
+    if not state:
+        return detail_updates([], 0)
+    return detail_updates(state["items"], state["index"] + delta)
+
+
+def item_media(item, height):
+    """The picture, clip or voice of one item (review card, earlier result)."""
+    kind, path = item.get("kind"), item.get("path")
+    if kind == "image" and path:
+        gr.Image(path, show_label=False, height=height, interactive=False)
+    elif kind == "video" and path:
+        gr.Video(path, show_label=False, height=height, interactive=False)
+    elif kind == "audio" and path:
+        gr.Audio(path, show_label=False, interactive=False)
+    else:
+        gr.Markdown("*(no voice in this scene)*" if kind == "audio" else "*(no picture yet)*",
+                    elem_classes=["card-empty"])
+
+
+def close_detail():
+    """Hides the window and empties its players, so a clip or a voice never keeps playing behind the page."""
+    return (None, gr.update(visible=False), gr.update(), gr.update(value=None), gr.update(value=None),
+            gr.update(value=None), gr.update(), gr.update(), gr.update())
 
 
 def status_html(errors, warnings):
@@ -368,16 +545,15 @@ def build_kit_panel():
 # Publishing panel (Upload-Post). Uses the kit texts as they are in the fields, edits included.
 # ---------------------------------------------------------------------------
 def build_publish_panel():
+    """Nothing is ticked and the visibility starts private: a reel is never posted by a stray click."""
     with gr.Row():
-        platforms = gr.CheckboxGroup([(v, k) for k, v in PUBLISH_PLATFORMS.items()], value=["tiktok", "instagram",
-                                                                                        "youtube", "facebook"],
-                                     label="Platforms")
+        platforms = gr.CheckboxGroup([(v, k) for k, v in PUBLISH_PLATFORMS.items()], value=[],
+                                     label="Platforms (none chosen yet)")
     with gr.Row():
         schedule = gr.Textbox(label="Schedule (empty = now)", placeholder="2026-11-02 18:30")
         timezone = gr.Textbox(label="Time zone", value="America/Costa_Rica")
-        yt_privacy = gr.Dropdown([(v, k) for k, v in YOUTUBE_PRIVACY.items()], value="public", label="YouTube")
-        tt_privacy = gr.Dropdown([(v, k) for k, v in TIKTOK_PRIVACY.items()], value="PUBLIC_TO_EVERYONE",
-                                 label="TikTok")
+        yt_privacy = gr.Dropdown([(v, k) for k, v in YOUTUBE_PRIVACY.items()], value="private", label="YouTube")
+        tt_privacy = gr.Dropdown([(v, k) for k, v in TIKTOK_PRIVACY.items()], value="SELF_ONLY", label="TikTok")
     first_comment = gr.Checkbox(value=True, label="💬 Post the first seed comment (Instagram, YouTube and Facebook)")
     button = gr.Button("📤 Publish this reel", variant="primary")
     result = gr.Markdown()
@@ -395,6 +571,9 @@ def publish_ui(ref, platforms, schedule, timezone, yt_privacy, tt_privacy, first
     folder = reel_folder(ref)
     if not folder:
         yield "Produce or pick a reel first."
+        return
+    if not platforms:
+        yield "Choose at least one platform first."
         return
     kit = load_publish_kit(folder)
     if kit:                                         # the fields win: they may have been edited by hand
@@ -445,11 +624,11 @@ PRODUCE_KEYS = ["idea", "duration", "style", "tone", "instructions", "num_scenes
                 "own_files", "voice_type", "voice_provider", "voice", "clone_sample", "scene_sound", "music_source",
                 "make_kit", "review_steps", "ai_width", "ai_height", "ai_frames", "ai_steps"]
 KIT_COUNT, REVIEW_COUNT = 7, 6
-OUTPUT_COUNT = 6 + KIT_COUNT + 2 + REVIEW_COUNT     # see snapshot_outputs
-
-
-def gallery_items(media):
-    return [(path, caption) for path, caption in media if path and os.path.exists(path)]
+OUTPUT_NAMES = (["progress", "step", "stepper", "video", "variants"] + [f"kit{i}" for i in range(KIT_COUNT)] +
+                ["tech", "reel", "review", "panel", "title", "storyboard_box", "storyboard_text", "items_box",
+                 "final", "composer", "summary", "summary_text", "results_choice", "results_col"])
+OUTPUT_COUNT = len(OUTPUT_NAMES)     # see snapshot_outputs
+OUT = {name: i for i, name in enumerate(OUTPUT_NAMES)}
 
 
 def form_settings(values):
@@ -472,11 +651,12 @@ STAGE_HINTS = {
     "storyboard": "Edit the text directly (what is seen, said and heard in each scene, in the language of your idea) "
                   "or regenerate it with notes. «Confirm» writes the English prompts of the scenes you changed and "
                   "goes on to the images.",
-    "images": "Edit a prompt and press its «Regenerate» to make that image again. «Confirm» goes on to the audio.",
-    "audio": "Edit a narration (empty = a scene without voice) and press its «Regenerate». Each scene lasts as long "
-             "as its narration. «Confirm» goes on to the clips, made to the length of each scene.",
-    "clips": "Edit a prompt or search and press its «Regenerate» (a paid clip is charged again). «Confirm» "
-             "assembles the reel.",
+    "images": "🔍 opens an image in detail. Edit a prompt and press its «Regenerate», or tick several and press "
+              "«Regenerate selected». «Confirm» goes on to the audio.",
+    "audio": "Edit a narration (empty = a scene without voice) and regenerate it, alone or with others ticked. Each "
+             "scene lasts as long as its narration. «Confirm» goes on to the clips, made to the length of each scene.",
+    "clips": "🔍 plays a clip in detail. Edit a prompt or search and regenerate it, alone or with others ticked (a "
+             "paid clip is charged again). «Confirm» assembles the reel.",
 }
 
 
@@ -493,31 +673,65 @@ def review_updates(review):
             gr.update(visible=not storyboard))
 
 
+def pack(values):
+    """{output name: value} -> the production outputs tuple; a name left out changes nothing."""
+    return tuple(values.get(name, gr.update()) for name in OUTPUT_NAMES)
+
+
 def snapshot_outputs(snap, shown):
-    """One snapshot -> the production outputs. `shown` remembers the kit and the review already on screen, so
-    they are only sent again when they change (and a storyboard you are editing is never overwritten)."""
+    """One snapshot -> the production outputs. `shown` remembers what is already on screen (kit, review, step
+    bar, earlier results), so it is only sent again when it changes and a storyboard you are editing is never
+    overwritten."""
     review = snap.get("review")
-    outputs = (progress_bar_html(snap["stage"], snap["pct"], snap["failed"], snap["done"], bool(review)),
-               step_html(current_step(snap["log"], snap["failed"])), snap["script"], gallery_items(snap["media"]),
-               snap["video"], snap["videos"] or None)
+    states = step_states(snap)
+    reel = snap.get("reel_dir")
+    finished = bool(snap.get("done") and snap.get("video"))
+    values = {"progress": progress_bar_html(stage_label(snap), snap["pct"], snap["failed"], snap["done"],
+                                            bool(review)),
+              "step": step_html(current_step(snap["log"], snap["failed"]) + (
+                  "<br><span class='hint'>You can close this tab: the job keeps running in Colab and this page "
+                  "shows it again when you come back.</span>"
+                  if not (snap["failed"] or snap["done"] or review) else "")),
+              "video": snap["video"], "variants": snap["videos"] or None, "tech": snap["tech"],
+              "reel": reel or gr.update()}
     if snap["kit"] is not shown.get("kit", "unset"):
         shown["kit"] = snap["kit"]
-        kit_part = tuple(kit_updates(snap["kit"]))
-    else:
-        kit_part = tuple(gr.update() for _ in range(KIT_COUNT))
+        values.update(zip([f"kit{i}" for i in range(KIT_COUNT)], kit_updates(snap["kit"])))
     key = json.dumps(review, sort_keys=True) if review else None
     if key != shown.get("review", "unset"):
         shown["review"] = key
-        review_part = review_updates(review)
-    else:
-        review_part = tuple(gr.update() for _ in range(REVIEW_COUNT))
-    return outputs + kit_part + (snap["tech"], snap["reel_dir"] or gr.update()) + review_part
+        values.update(zip(["review", "panel", "title", "storyboard_box", "storyboard_text", "items_box"],
+                          review_updates(review)))
+    bar = stepper_html(states)
+    if bar != shown.get("stepper"):
+        shown["stepper"] = bar
+        values["stepper"] = bar
+    if finished != shown.get("final"):
+        shown["final"] = finished
+        values["final"] = gr.update(visible=finished)
+    if reel and reel != shown.get("summary_reel"):        # a reel under way: the composer folds into one line
+        shown["summary_reel"] = reel
+        values.update(composer=gr.update(visible=False), summary=gr.update(visible=True),
+                      summary_text=summary_html(reel))
+    choices = done_steps(states)
+    if choices != shown.get("results"):
+        shown["results"] = choices
+        values.update(results_choice=gr.update(choices=choices, value=choices[-1][1] if choices else None),
+                      results_col=gr.update(visible=bool(choices)))
+    return pack(values)
 
 
 def no_change(message=None, failed=False):
     """Production outputs that only show a message in the progress bar."""
-    bar = progress_bar_html(message, 0, failed=failed) if message else gr.update()
-    return (bar,) + tuple(gr.update() for _ in range(OUTPUT_COUNT - 1))
+    return pack({"progress": progress_bar_html(message, 0, failed=failed)} if message else {})
+
+
+def new_reel_ui():
+    """«New reel»: the composer comes back; the finished or paused reel stays in «My reels»."""
+    return pack({"progress": progress_bar_html(), "step": "", "stepper": "", "video": None, "variants": None,
+                 "reel": None, "review": None, "panel": gr.update(visible=False), "final": gr.update(visible=False),
+                 "composer": gr.update(visible=True), "summary": gr.update(visible=False), "summary_text": "",
+                 "results_choice": gr.update(choices=[], value=None), "results_col": gr.update(visible=False)})
 
 
 def follow_ui(job):
@@ -537,8 +751,11 @@ def start_job_ui(kind, label, factory):
 
 def produce_ui(*values):
     # Instant feedback: if even this does not show up, the problem is the connection to the UI, not the pipeline.
-    yield (progress_bar_html("Starting…", 0), step_html(f"Live log also in {ReelRun.LOG_FILE}"), "", [],
-           None, None) + tuple(gr.update() for _ in range(KIT_COUNT)) + ("", gr.update()) + review_updates(None)
+    yield pack(dict(zip(["review", "panel", "title", "storyboard_box", "storyboard_text", "items_box"],
+                        review_updates(None)),
+                    progress=progress_bar_html("Starting…", 0), step=step_html(f"Live log also in {ReelRun.LOG_FILE}"),
+                    stepper=stepper_html({"storyboard": "running"}), video=None, variants=None, tech="",
+                    final=gr.update(visible=False)))
     settings = form_settings(values)
     if drive_responds():                       # never block the run on a stale Drive just to remember choices
         save_prefs(settings)
@@ -578,6 +795,21 @@ def regenerate_item_ui(reel_dir, item_id, text):
         return
     yield from start_job_ui("regenerate", f"{os.path.basename(reel_dir)} · {item_id}",
                             lambda: regenerate_item(reel_dir, item_id, text))
+
+
+def regenerate_many_ui(reel_dir, pairs):
+    """«Regenerate selected»: the chosen items one after the other in a single job, each with its own text."""
+    if not reel_dir or not os.path.isdir(reel_dir):
+        yield no_change("There is no reel waiting for review.", failed=True)
+        return
+    if not pairs:
+        yield no_change("Select at least one item to regenerate.", failed=True)
+        return
+
+    def many():
+        for item_id, text in pairs:
+            yield from regenerate_item(reel_dir, item_id, text)
+    yield from start_job_ui("regenerate", f"{os.path.basename(reel_dir)} · {len(pairs)} item(s)", many)
 
 
 def attach_ui():
@@ -843,7 +1075,8 @@ def save_reel_preset_ui(folder, name):
 
 def reel_job_outputs(outputs):
     """Production outputs -> the reels tab's (progress bar, current step, video)."""
-    return outputs[0], outputs[1], outputs[4] if outputs[4] else gr.update()
+    video = outputs[OUT["video"]]
+    return outputs[OUT["progress"]], outputs[OUT["step"]], video if video else gr.update()
 
 
 def reassemble_ui(path, *montage_values):
@@ -889,7 +1122,7 @@ def build_ui():
             # ============================================================= produce
             with gr.Tab("🎬 Produce", id="produce"):
                 with gr.Column(elem_classes=["main"]):
-                    with gr.Column(elem_classes=["composer"]):
+                    with gr.Column(elem_classes=["composer"]) as composer_box:
                         idea_in = gr.Textbox(show_label=False, container=False, lines=2, max_lines=6,
                                              placeholder="Describe your reel idea, in the language the video will "
                                                          "speak… (e.g. why wolves hunt in packs)")
@@ -898,74 +1131,137 @@ def build_ui():
                                 gr.Button(label, size="sm", elem_classes=["chip"]) for label in labels]
                             settings_chip = gr.Button("⚙️ Settings", size="sm", elem_classes=["chip"])
                             produce_btn = gr.Button("➤", variant="primary", size="sm", elem_classes=["send"])
-                    status_box = gr.HTML()
-                    progress_box = gr.HTML(progress_bar_html())
-                    step_md = gr.HTML()
-                    with gr.Row(elem_classes=["actions"]):
-                        stop_btn = gr.Button("⏹ Stop", size="sm")
-                        resume_btn = gr.Button("🔁 Resume where it failed", size="sm")
-                        attach_btn = gr.Button("📡 Show the job in progress", size="sm")
-                        show_tech_cb = gr.Checkbox(value=prefs["show_tech"], label="🔧 Show the technical log",
-                                                   container=False)
-                    tech_out = gr.Textbox(show_label=False, lines=14, max_lines=14, autoscroll=True, interactive=False,
-                                          elem_classes=["tech-log"], visible=prefs["show_tech"], **copy_kwargs())
+                        status_box = gr.HTML()
+                    with gr.Row(visible=False, elem_classes=["summary-row"]) as summary_box:
+                        summary_out = gr.HTML()
+                        new_reel_btn = gr.Button("✏️ New reel", size="sm", elem_classes=["new-reel"])
+                    stepper_out = gr.HTML()
 
-                    # ------------------------------------------------ review of the step that just finished
-                    review_state = gr.State(None)
-                    reel_state = gr.State(None)
-                    with gr.Column(visible=False, elem_classes=["review"]) as review_panel:
-                        review_title = gr.Markdown()
-                        with gr.Column(visible=False) as storyboard_box:
-                            storyboard_tb = gr.Textbox(show_label=False, lines=22, max_lines=60, interactive=True,
-                                                       elem_classes=["storyboard"], **copy_kwargs())
-                            notes_tb = gr.Textbox(label="What should change? (optional, used by «Regenerate»)",
-                                                  lines=1, placeholder="e.g. more humor, a scene with the cubs")
+                    with gr.Row(equal_height=False, elem_classes=["workspace"]):
+                        # ------------------------------------------- the step at hand (one panel at a time)
+                        with gr.Column(scale=3, min_width=360, elem_classes=["active"]):
+                            progress_box = gr.HTML(progress_bar_html())
+                            step_md = gr.HTML()
                             with gr.Row(elem_classes=["actions"]):
-                                regen_storyboard_btn = gr.Button("🔄 Regenerate the storyboard", size="sm")
-                                confirm_storyboard_btn = gr.Button("✅ Confirm the storyboard", variant="primary",
-                                                                   size="sm")
-                        with gr.Column(visible=False) as items_box:
-                            @gr.render(inputs=[review_state])
-                            def review_rows(review):
-                                if not review or review.get("stage") == "storyboard":
+                                stop_btn = gr.Button("⏹ Stop", size="sm")
+                                resume_btn = gr.Button("🔁 Resume where it failed", size="sm")
+                                attach_btn = gr.Button("📡 Show the job in progress", size="sm")
+                                show_tech_cb = gr.Checkbox(value=prefs["show_tech"], label="🔧 Show the technical log",
+                                                           container=False)
+                            tech_out = gr.Textbox(show_label=False, lines=14, max_lines=14, autoscroll=True,
+                                                  interactive=False, elem_classes=["tech-log"],
+                                                  visible=prefs["show_tech"], **copy_kwargs())
+
+                            review_state = gr.State(None)
+                            reel_state = gr.State(None)
+                            detail_state = gr.State(None)
+                            with gr.Column(visible=False, elem_classes=["review"]) as review_panel:
+                                review_title = gr.Markdown()
+                                with gr.Column(visible=False) as storyboard_box:
+                                    storyboard_tb = gr.Textbox(show_label=False, lines=22, max_lines=60,
+                                                               interactive=True, elem_classes=["storyboard"],
+                                                               **copy_kwargs())
+                                    notes_tb = gr.Textbox(label="What should change? (optional, used by «Regenerate»)",
+                                                          lines=1, placeholder="e.g. more humor, a scene with the cubs")
+                                    with gr.Row(elem_classes=["actions"]):
+                                        regen_storyboard_btn = gr.Button("🔄 Regenerate the storyboard", size="sm")
+                                        confirm_storyboard_btn = gr.Button("✅ Confirm the storyboard",
+                                                                           variant="primary", size="sm")
+                                with gr.Column(visible=False) as items_box:
+                                    @gr.render(inputs=[review_state])
+                                    def review_rows(review):
+                                        if not review or review.get("stage") == "storyboard":
+                                            return
+                                        items = review.get("items", [])
+                                        checks, texts, ids = [], [], [item["id"] for item in items]
+                                        with gr.Row(elem_classes=["actions"]):
+                                            select_all = gr.Button("☑️ Select all", size="sm")
+                                            regen_selected = gr.Button("🔄 Regenerate selected", size="sm",
+                                                                       elem_classes=["regen-selected"])
+                                        with gr.Row(elem_classes=["cards"]):
+                                            for index, item in enumerate(items):
+                                                with gr.Column(min_width=220, elem_classes=["card"]):
+                                                    item_media(item, height=220)
+                                                    gr.Markdown(f"**`{item['id']}`** · {html.escape(item['label'])}",
+                                                                elem_classes=["card-label"])
+                                                    checks.append(gr.Checkbox(value=False, label="Select",
+                                                                              container=False))
+                                                    text = gr.Textbox(value=item["text"], label=item["text_label"],
+                                                                      lines=2, interactive=True)
+                                                    texts.append(text)
+                                                    with gr.Row(elem_classes=["actions"]):
+                                                        view = gr.Button("🔍 View", size="sm",
+                                                                         elem_classes=["view"])
+                                                        button = gr.Button(f"🔄 Regenerate {item['id']}", size="sm",
+                                                                           elem_classes=["regen"])
+                                                    view.click(lambda _i=index, _items=items: detail_updates(_items, _i),
+                                                               None, detail_outputs)
+
+                                                    def regenerate(reel, new_text, _id=item["id"]):
+                                                        yield from regenerate_item_ui(reel, _id, new_text)
+                                                    button.click(regenerate, [reel_state, text], production_outputs,
+                                                                 concurrency_limit=None)
+                                        select_all.click(lambda: [gr.update(value=True) for _ in checks], None, checks)
+
+                                        def regenerate_selected(reel, *values, _ids=tuple(ids)):
+                                            flags, new_texts = values[:len(_ids)], values[len(_ids):]
+                                            pairs = [(i, t) for i, f, t in zip(_ids, flags, new_texts) if f]
+                                            yield from regenerate_many_ui(reel, pairs)
+                                        regen_selected.click(regenerate_selected, [reel_state] + checks + texts,
+                                                             production_outputs, concurrency_limit=None)
+                                    confirm_items_btn = gr.Button("✅ Confirm and continue", variant="primary")
+
+                            # ------------------------------------------- the finished reel and publishing
+                            with gr.Column(visible=False, elem_classes=["final"]) as final_section:
+                                gr.Markdown("### ✅ Your reel is ready\nThe fast way to get the file is your Drive "
+                                            "(`YT-Channel-Studio/reels/`); the download button here goes through the "
+                                            "tunnel and is slower.")
+                                video_out = gr.Video(label="📱 Final reel", height=520)
+                                variants_out = gr.File(label="🎞️ All variants", file_count="multiple",
+                                                       interactive=False)
+                                with gr.Column(visible=prefs["make_kit"]) as kit_section:
+                                    with gr.Accordion("📣 Publish kit", open=False):
+                                        kit_panel = build_kit_panel()
+                                with gr.Accordion("📤 Publish (Upload-Post)", open=True):
+                                    publish_btn, publish_inputs, publish_out = build_publish_panel()
+
+                        # ------------------------------------------- earlier results, readable while a step runs
+                        with gr.Column(scale=2, min_width=300, visible=False, elem_classes=["results"]) as results_col:
+                            gr.Markdown("**Earlier results** · open a finished step without leaving this one",
+                                        elem_classes=["results-title"])
+                            results_choice = gr.Radio([], value=None, show_label=False, container=False,
+                                                      elem_classes=["results-tabs"])
+
+                            @gr.render(inputs=[reel_state, results_choice])
+                            def results_view(reel, step):
+                                items = step_items(reel, step) if reel and step else []
+                                if not items:
+                                    gr.Markdown("*(nothing to show yet)*")
                                     return
-                                for item in review.get("items", []):
-                                    with gr.Row(elem_classes=["review-item"], equal_height=False):
-                                        with gr.Column(scale=1, min_width=200):
-                                            if item["kind"] == "image":
-                                                gr.Image(item["path"], show_label=False, height=240,
-                                                         interactive=False)
-                                            elif item["kind"] == "audio" and item["path"]:
-                                                gr.Audio(item["path"], show_label=False, interactive=False)
-                                            elif item["kind"] == "video":
-                                                gr.Video(item["path"], show_label=False, height=240,
-                                                         interactive=False)
-                                            else:
-                                                gr.Markdown("*(no voice in this scene)*")
-                                        with gr.Column(scale=2):
-                                            gr.Markdown(f"**`{item['id']}`** · {html.escape(item['label'])}")
-                                            text = gr.Textbox(value=item["text"], label=item["text_label"], lines=2,
-                                                              interactive=True)
-                                            button = gr.Button(f"🔄 Regenerate {item['id']}", size="sm",
-                                                               elem_classes=["regen"])
+                                with gr.Row(elem_classes=["cards", "cards-small"]):
+                                    for index, item in enumerate(items):
+                                        with gr.Column(min_width=140, elem_classes=["card", "card-small"]):
+                                            item_media(item, height=150)
+                                            gr.Markdown(html.escape(item["label"]), elem_classes=["card-label"])
+                                            view = gr.Button("🔍 View", size="sm", elem_classes=["view"])
+                                            view.click(lambda _i=index, _items=items: detail_updates(_items, _i),
+                                                       None, detail_outputs)
 
-                                            def regenerate(reel, new_text, _id=item["id"]):
-                                                yield from regenerate_item_ui(reel, _id, new_text)
-                                            button.click(regenerate, [reel_state, text], production_outputs,
-                                                         concurrency_limit=None)
-                            confirm_items_btn = gr.Button("✅ Confirm and continue", variant="primary")
-
-                    video_out = gr.Video(label="📱 Final reel")
-                    variants_out = gr.File(label="🎞️ All variants", file_count="multiple", interactive=False)
-                    with gr.Accordion("🎬 Storyboard", open=False):
-                        script_out = gr.Textbox(show_label=False, lines=12, interactive=False, **copy_kwargs())
-                    with gr.Column(visible=prefs["make_kit"]) as kit_section:
-                        with gr.Accordion("📣 Publish kit (ready once the storyboard is confirmed)", open=True):
-                            kit_panel = build_kit_panel()
-                    with gr.Accordion("🖼️ Images and clips", open=False):
-                        gallery_out = gr.Gallery(show_label=False, columns=4, height=240, object_fit="cover")
-                    with gr.Accordion("📤 Publish (Upload-Post)", open=False):
-                        publish_btn, publish_inputs, publish_out = build_publish_panel()
+                    # ----------------------------------------------- one item in detail (images, clips, voices...)
+                    with gr.Column(visible=False, elem_classes=["modal", "detail-modal"]) as detail_modal:
+                        with gr.Column(elem_classes=["modal-card", "detail-card"]):
+                            detail_title = gr.Markdown()
+                            detail_image = gr.Image(show_label=False, interactive=False, visible=False, height=560)
+                            detail_video = gr.Video(show_label=False, interactive=False, visible=False, height=560)
+                            detail_audio = gr.Audio(show_label=False, interactive=False, visible=False)
+                            detail_text = gr.Markdown(elem_classes=["detail-text"])
+                            with gr.Row(elem_classes=["actions", "detail-nav"]):
+                                detail_prev = gr.Button("← Previous", size="sm")
+                                detail_close = gr.Button("✕ Close", size="sm", variant="primary",
+                                                         elem_classes=["detail-close"])
+                                detail_next = gr.Button("Next →", size="sm")
+                    detail_outputs = [detail_state, detail_modal, detail_title, detail_image, detail_video,
+                                      detail_audio, detail_text, detail_prev, detail_next]
 
                 # ---------------------------------------------------- picker windows
                 llm_modal, card = modal("🧠 Text: storyboard and publish kit")
@@ -1166,9 +1462,15 @@ def build_ui():
                 reel_kit_panel = build_kit_panel()
 
         # ----------------------------------------------------------------- wiring
-        production_outputs += [progress_box, step_md, script_out, gallery_out, video_out, variants_out] + kit_panel + \
-            [tech_out, reel_state, review_state, review_panel, review_title, storyboard_box, storyboard_tb, items_box]
+        production_outputs += [progress_box, step_md, stepper_out, video_out, variants_out] + kit_panel + \
+            [tech_out, reel_state, review_state, review_panel, review_title, storyboard_box, storyboard_tb, items_box,
+             final_section, composer_box, summary_box, summary_out, results_choice, results_col]
         assert len(production_outputs) == OUTPUT_COUNT
+        assert len(detail_outputs) == DETAIL_COUNT
+        detail_prev.click(lambda state: detail_step(state, -1), detail_state, detail_outputs)
+        detail_next.click(lambda state: detail_step(state, 1), detail_state, detail_outputs)
+        detail_close.click(close_detail, None, detail_outputs)
+        new_reel_btn.click(new_reel_ui, None, production_outputs)
 
         chips = [llm_chip, image_chip, voice_chip, video_chip, format_chip, duration_chip, style_chip]
         chip_inputs = [llm_dd, model_dd, image_rd, voice_provider_dd, voice_dd, clip_dd, aspect_rd, duration_sl, style_rd]
@@ -1247,7 +1549,8 @@ def build_ui():
 
 
 UI_CSS = """
-.main {max-width: 980px; margin: 0 auto !important; width: 100%;}
+.main {max-width: 1240px; margin: 0 auto !important; width: 100%;}
+.composer {max-width: 980px; width: 100%; margin: 0 auto !important;}
 .composer {border: 1px solid var(--border-color-primary) !important; border-radius: 24px !important;
            padding: 14px 16px 10px 16px !important; background: var(--block-background-fill) !important;}
 .composer textarea {font-size: 17px !important; border: none !important; box-shadow: none !important;
@@ -1265,7 +1568,6 @@ button.send {border-radius: 999px !important; min-width: 42px !important; width:
          background: rgba(217, 119, 6, .06) !important;}
 .storyboard textarea {font-family: ui-monospace, Menlo, Consolas, monospace !important; font-size: 13px !important;
                       line-height: 1.5 !important;}
-.review-item {border-top: 1px solid var(--border-color-primary); padding-top: 8px !important;}
 button.regen {width: auto !important; align-self: flex-start;}
 .modal {position: fixed !important; inset: 0 !important; z-index: 1000 !important; margin: 0 !important;
         max-width: none !important; background: rgba(0, 0, 0, .55) !important; overflow-y: auto !important;
@@ -1275,6 +1577,42 @@ button.regen {width: auto !important; align-self: flex-start;}
              border-radius: 18px !important; padding: 18px !important; box-shadow: 0 20px 60px rgba(0, 0, 0, .45) !important;}
 .tech-log textarea {font-family: ui-monospace, Menlo, Consolas, monospace !important; font-size: 12px !important;}
 .section-title {padding: 8px 12px 4px 12px !important;}
+.summary-row {align-items: center !important; gap: 10px !important; border: 1px solid var(--border-color-primary);
+              border-radius: 14px; padding: 10px 14px !important; background: var(--block-background-fill);}
+.summary-row > * {min-width: 0 !important;}
+.summary-row > .new-reel, button.new-reel {flex: 0 0 auto !important; width: auto !important;}
+.summary-idea {font-weight: 600; font-size: 16px;}
+.summary-folder {font-size: 12px; opacity: .7;}
+.stepper {display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin: 4px 0 !important; padding: 0 !important;}
+.stepper .step {display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 14px; border-radius: 999px;
+                font-size: 13px; border: 1px solid var(--border-color-primary); opacity: .7; margin: 0 !important;}
+.stepper .step-dot {width: 20px; height: 20px; border-radius: 999px; display: inline-flex; align-items: center;
+                    justify-content: center; font-size: 11px; font-weight: 700;
+                    background: var(--border-color-primary);}
+.stepper .step-done {opacity: 1;}
+.stepper .step-done .step-dot {background: #15803d; color: #fff;}
+.stepper .step-running {opacity: 1; border-color: #4f46e5; font-weight: 600;}
+.stepper .step-running .step-dot {background: #4f46e5; color: #fff;}
+.stepper .step-review {opacity: 1; border-color: #d97706; font-weight: 600;}
+.stepper .step-review .step-dot {background: #d97706; color: #1c1206;}
+.stepper .step-failed {opacity: 1; border-color: #dc2626; font-weight: 600;}
+.stepper .step-failed .step-dot {background: #dc2626; color: #fff;}
+.workspace {gap: 16px !important; align-items: flex-start !important; flex-wrap: wrap !important;}
+.results {border: 1px solid var(--border-color-primary) !important; border-radius: 18px !important;
+          padding: 12px !important; position: sticky; top: 8px;}
+.results-tabs .wrap {gap: 6px !important;}
+.cards {display: grid !important; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)) !important;
+        gap: 12px !important;}
+.cards-small {grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)) !important; gap: 8px !important;}
+.card {border: 1px solid var(--border-color-primary) !important; border-radius: 14px !important;
+       padding: 10px !important; gap: 6px !important; min-width: 0 !important; width: auto !important;}
+.card-label, .card-label .prose {font-size: 13px !important;}
+button.view {width: auto !important;}
+.final {border: 1px solid #16a34a !important; border-radius: 18px !important; padding: 12px 14px !important;}
+.detail-card {max-width: 920px !important;}
+.detail-text {max-height: 30vh; overflow-y: auto;}
+.detail-nav {justify-content: space-between !important;}
+.step-line .hint {font-family: var(--font); font-size: 12px; opacity: .75;}
 .section-title > *, .section-title .prose {padding: 0 !important; margin: 0 !important;}
 """
 
