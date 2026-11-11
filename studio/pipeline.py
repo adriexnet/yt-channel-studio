@@ -998,7 +998,7 @@ class ReelRun:
     LOG_FILE = f"{WORK_DIR}/current_run.log"     # local disk: `!tail -f` it from any cell
 
     def __init__(self):
-        self.t0 = time.time()
+        self.t0 = self.last_line = time.time()
         self.lines, self.media, self.tech_lines, self.videos = [], [], [], []
         self.stage, self.pct = "Preparing", 0
         self.script, self.video, self.failed, self.done = "", None, False, False
@@ -1017,7 +1017,8 @@ class ReelRun:
         del self.tech_lines[:-800]               # keep the UI light on long runs
 
     def log(self, msg):
-        elapsed = int(time.time() - self.t0)
+        self.last_line = time.time()
+        elapsed = int(self.last_line - self.t0)
         line = f"[{elapsed // 60:02d}:{elapsed % 60:02d}] {msg}"
         self.lines.append(line)
         self.tech(f"STEP | {msg}")
@@ -1050,7 +1051,8 @@ class ReelRun:
         return {"log": "\n".join(self.lines), "stage": self.stage, "pct": self.pct, "script": self.script,
                 "media": list(self.media), "video": self.video, "videos": list(self.videos), "failed": self.failed,
                 "done": self.done, "kit": self.kit, "tech": "\n".join(self.tech_lines), "reel_dir": self.reel_dir,
-                "review": self.review}
+                "review": self.review, "elapsed": int(time.time() - self.t0),
+                "since": int(time.time() - self.last_line)}   # seconds on the current line: shown while waiting
 
 
 def _wait_for(run, job):
