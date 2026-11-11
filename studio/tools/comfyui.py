@@ -8,13 +8,13 @@ CUSTOM_NODES = [
     "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git",
     "https://github.com/Lightricks/ComfyUI-LTXVideo.git",
 ]
-VIDEO_MODELS = {   # name -> list of (url, Drive sub-folder, file name)
+VIDEO_MODELS = {   # name -> list of (url, sub-folder of LOCAL_MODELS_DIR, file name)
     "wan22": [
         ("https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors", "video", "wan2.2_ti2v_5B_fp16.safetensors"),
         ("https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan2.2_vae.safetensors", "vae", "wan2.2_vae.safetensors"),
         ("https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors", "clip", "umt5_xxl_fp8_e4m3fn_scaled.safetensors"),
     ],
-    "ltxv": [   # its T5 text encoder is the one Cell 4 downloads (t5xxl_fp8_e4m3fn)
+    "ltxv": [   # its own T5 text encoder: Cell 4 no longer downloads one by default
         ("https://huggingface.co/Lightricks/LTX-Video/resolve/main/ltx-video-2b-v0.9.5.safetensors", "video", "ltx-video-2b-v0.9.5.safetensors"),
         ("https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn.safetensors", "clip", "t5xxl_fp8_e4m3fn.safetensors"),
     ],
@@ -51,10 +51,10 @@ def start(models=None):
 
     for name in models:
         for url, subdir, filename in VIDEO_MODELS[name]:
-            download_if_missing(url, f"{MODELS_DIR}/{subdir}", filename)
+            download_if_missing(url, f"{LOCAL_MODELS_DIR}/{subdir}", filename)   # local disk, this cell
     for src, dst in (("unet", "unet"), ("qwen_edit", "unet"), ("video", "diffusion_models"), ("video", "checkpoints"),
                      ("vae", "vae"), ("clip", "clip"), ("clip", "text_encoders")):
-        link_models(f"{MODELS_DIR}/{src}", f"{COMFY_DIR}/models/{dst}")
+        link_models(f"{LOCAL_MODELS_DIR}/{src}", f"{COMFY_DIR}/models/{dst}")
     print("Models linked into ComfyUI.")
 
     print("Starting ComfyUI...")             # --enable-cors-header avoids the 403 behind the tunnel

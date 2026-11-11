@@ -75,7 +75,6 @@ BASE_DIR = os.environ.get("STUDIO_BASE_DIR", f"{CONTENT_DIR}/drive/MyDrive/YT-Ch
 REAL_DRIVE_DIR = f"{DRIVE_MOUNT_POINT}/MyDrive/YT-Channel-Studio"
 CODE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # this repository
 CODE_BACKUP_DIR = f"{BASE_DIR}/code"     # last working copy, used when GitHub cannot be reached
-MODELS_DIR = f"{BASE_DIR}/models"
 REELS_DIR = f"{BASE_DIR}/reels"
 CONFIG_DIR = f"{BASE_DIR}/config"
 VOICES_DIR = f"{BASE_DIR}/voices"
@@ -83,7 +82,6 @@ MUSIC_DIR = f"{BASE_DIR}/music"          # background songs: yours, plus the one
 MUSIC_AI_DIR = f"{MUSIC_DIR}/ai"
 FOOTAGE_DIR = f"{BASE_DIR}/footage"      # your own clips and photos for the "My clips" source
 FONTS_DIR = f"{BASE_DIR}/fonts"          # subtitle fonts (Cell 2 adds a few; drop your own .ttf/.otf here)
-TTS_MODELS_DIR = f"{MODELS_DIR}/tts"
 KEYS_FILE = f"{CONFIG_DIR}/api_keys.toml"
 LINKS_FILE = f"{CONTENT_DIR}/active_links.json"
 WORK_DIR = f"{CONTENT_DIR}/work"          # fast local scratch; finals are copied to Drive
@@ -98,7 +96,6 @@ def log_path(name):
     """Server and tunnel logs live on the local disk: `!tail -f` them from any cell."""
     return f"{CONTENT_DIR}/{name}.log"
 
-MODEL_SUBDIRS = ["unet", "clip", "vae", "qwen_edit", "video", "tts"]   # Ollama weights live in LOCAL_MODELS_DIR
 
 # Same torch for every app; cu128 covers T4, L4, A100, H100 and Blackwell GPUs.
 TORCH_SPEC = ("torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 "
@@ -240,8 +237,6 @@ def mount_project_drive():
 
 
 def ensure_project_dirs():
-    for sub in MODEL_SUBDIRS:
-        os.makedirs(f"{MODELS_DIR}/{sub}", exist_ok=True)
     for d in [REELS_DIR, CONFIG_DIR, VOICES_DIR, MUSIC_DIR, MUSIC_AI_DIR, FOOTAGE_DIR, FONTS_DIR,
               WORK_DIR, VENVS_DIR, UV_CACHE_DIR, HF_CACHE_DIR]:
         os.makedirs(d, exist_ok=True)
@@ -419,19 +414,20 @@ def check_torch(python, label):
 # Models
 # ---------------------------------------------------------------------------
 def download_if_missing(url, dest_dir, filename, hf_token=None):
-    """Resumable download into Drive; skipped when the file already exists."""
+    """Resumable download, skipped when the file already exists. Model weights go to LOCAL_MODELS_DIR: each
+    tool cell downloads its own when it runs, because loading them from Drive kept the GPU waiting."""
     os.makedirs(dest_dir, exist_ok=True)
     final_path = os.path.join(dest_dir, filename)
     part_path = final_path + ".part"
     if os.path.exists(final_path) and os.path.getsize(final_path) > 1024 * 1024:
-        print(f"[exists in Drive] {filename} ({os.path.getsize(final_path) / 1024**3:.2f} GB)")
+        print(f"[already downloaded] {filename} ({os.path.getsize(final_path) / 1024**3:.2f} GB)")
         return final_path
     hf_token = hf_token or get_key("huggingface", "token")
     headers = {"Authorization": f"Bearer {hf_token}"} if hf_token else {}
     downloaded = os.path.getsize(part_path) if os.path.exists(part_path) else 0
     if downloaded:
         headers["Range"] = f"bytes={downloaded}-"
-    print(f"Downloading {filename} to Drive...")
+    print(f"Downloading {filename}...")
     with requests.get(url, headers=headers, stream=True) as r:
         r.raise_for_status()
         total = int(r.headers.get("content-length", 0)) + downloaded
@@ -448,8 +444,10 @@ def download_if_missing(url, dest_dir, filename, hf_token=None):
 
 
 def link_models(src_dir, dst_dir):
-    """Symlink every model file in a Drive folder into an app's model folder."""
+    """Symlink every model file in a folder into an app's model folder (a missing folder links nothing)."""
     os.makedirs(dst_dir, exist_ok=True)
+    if not os.path.isdir(src_dir):
+        return
     for name in os.listdir(src_dir):
         if name.endswith(".part"):
             continue

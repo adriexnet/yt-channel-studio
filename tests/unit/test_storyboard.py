@@ -92,3 +92,11 @@ def test_prompt_asks_for_the_idea_language_and_english_prompts():
     assert "fits the idea and the style best" in prompt and "menciona @canal" in prompt
     assert "photorealistic" in build_storyboard_prompt(4, style="narrated") and "Exactly 4 scenes" in build_storyboard_prompt(4)
     assert [auto_scenes(d) for d in (15, 35, 90)] == [3, 5, 10]
+
+
+def test_format_words_have_no_ratio():
+    """A "9:16"-style ratio in a FLUX prompt makes Forge return noise, so the prompts never ask for one."""
+    from studio.storyboard import FORMAT_WORDS, build_scene_prompts_prompt
+    for aspect, words in FORMAT_WORDS.items():
+        assert ":" not in words
+        assert aspect not in build_scene_prompts_prompt(aspect)

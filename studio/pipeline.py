@@ -163,8 +163,19 @@ FLUX_SIZES = {"9:16": (768, 1344), "16:9": (1344, 768), "1:1": (1024, 1024)}
 IMAGE_API_SIZES = {"16:9": "1536x1024", "1:1": "1024x1024"}     # 9:16 uses the size saved in your keys
 
 
+ASPECT_RATIO_TEXT = re.compile(r",?\s*\b(?:(?:vertical|horizontal|square|portrait|landscape)\s+)?"
+                               r"(?:9:16|16:9|1:1|4:5|5:4|3:4|4:3|2:3|3:2|21:9)\b", re.I)
+
+
+def forge_prompt(prompt):
+    """Removes ratios such as "vertical 9:16": Forge turns a FLUX image with one into noise (seen on Colab).
+    Plans saved before this fix still carry them in their image prompts."""
+    return ASPECT_RATIO_TEXT.sub("", prompt).strip(" ,")
+
+
 def forge_txt2img(prompt, output_path, width=768, height=1344, steps=20, seed=-1):
     """One FLUX image. The flux1-dev-fp8 checkpoint already contains VAE and text encoders."""
+    prompt = forge_prompt(prompt)
     payload = {
         "prompt": prompt, "negative_prompt": "", "width": width, "height": height,
         "steps": steps, "cfg_scale": 1, "distilled_cfg_scale": 3.5,
