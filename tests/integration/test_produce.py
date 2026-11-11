@@ -195,8 +195,8 @@ def test_scene_sound_effects_and_clip_sound_in_silent_scenes(services, http):
     assert last["done"], last["log"][-600:]
     sfx = [c for c in http.calls if "sound-generation" in c["url"]]
     assert len(sfx) == 1 and sfx[0]["json"]["duration_seconds"] == 2 and sfx[0]["json"]["text"] == "a soft dog bark"
-    assert ["About 6 seconds" in c["input"] for c in calls] == [True, False, True]      # clips ask for the scene length
-    assert "About 2 seconds" in calls[1]["input"]
+    durations = [c["response_format"]["duration"] for c in calls]          # clips ask for the scene length
+    assert durations[1] == "3s" and durations[0] == durations[2] and durations[0] in ("6s", "7s")
     reel = last["reel_dir"]
     assert os.path.exists(f"{reel}/audio/scene_02_sound.mp3") and P.load_assets(reel)["clip_audio"] == [True] * 3
     _, _, duration, has_audio, _ = probe(last["video"])

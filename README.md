@@ -68,7 +68,7 @@ waiting for minutes; a fresh download is faster.
 | Content | Local | External |
 |---|---|---|
 | Storyboard and kit | Ollama | OpenAI, Anthropic, Google Gemini and any OpenAI-compatible API (Groq, OpenRouter, DeepSeek…) |
-| Clips | Wan 2.2, LTX-Video, animated photos, your own clips | Pexels, Pixabay, Coverr (free); Google Gemini Omni (Veo's successor in the Gemini API, with sound), WaveSpeed, Seedance, OFox, MuAPI, Metaso, Infistar (paid, with confirmation) |
+| Clips | Wan 2.2, LTX-Video, animated photos, your own clips | Pexels, Pixabay, Coverr (free); Google Gemini Omni Flash (Veo's successor in the Gemini API: 3-15 s clips with sound), WaveSpeed, Seedance, OFox, MuAPI, Metaso, Infistar (paid, with confirmation) |
 | Voice | Edge-TTS, F5-TTS (cloning) | ElevenLabs, OpenAI, Azure, Gemini TTS, SiliconFlow, MiMo, MiniMax, Fish Audio, VoxCPM |
 | Images (cover, first frame, AI photos) | FLUX (Forge) | Nano Banana (Gemini) and any OpenAI-compatible image API |
 | Scene sound | The clip's own sound (AI video with audio, your files) | ElevenLabs sound effects |

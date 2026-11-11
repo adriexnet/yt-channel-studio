@@ -269,18 +269,26 @@ def nano_banana_generate(prompt, output_path, aspect="9:16"):
     return save_gemini_media(item, output_path)
 
 
+def omni_duration(seconds):
+    """Omni takes whole seconds from 3 to 15; the montage trims or holds the rest."""
+    return f"{max(3, min(15, math.ceil(seconds)))}s"
+
+
 def omni_generate_video(prompt, seconds, aspect, output_path, image_path=None):
-    """Gemini Omni (the Gemini API's successor of Veo): video with sound, optionally starting from an image.
-    It has no length field, so the length goes in the prompt; 1:1 is made in 9:16 and cropped by the montage."""
-    model = get_key("gemini", "video_model", "gemini-omni-1.1-flash")
-    text = f"{prompt}. About {int(round(seconds))} seconds long, no subtitles or text on screen."
+    """Gemini Omni Flash (what the Gemini API offers since the Veo 3.1 previews were shut down): video with
+    native sound, optionally starting from an image. The length goes in `duration` (3-15 s); 1:1 is made in 9:16
+    and cropped by the montage."""
+    model = get_key("gemini", "video_model", "gemini-omni-1.2-flash")
+    text = f"{prompt}. No subtitles or text on screen."
     content = text
     if image_path:
         with open(image_path, "rb") as f:
             image = base64.b64encode(f.read()).decode()
-        content = [{"type": "image", "data": image, "mime_type": "image/png"}, {"type": "text", "text": text}]
+        mime = "image/jpeg" if image_path.lower().endswith((".jpg", ".jpeg")) else "image/png"
+        content = [{"type": "image", "data": image, "mime_type": mime}, {"type": "text", "text": text}]
     body = gemini_interaction(model, content, {"type": "video", "aspect_ratio": "16:9" if aspect == "16:9" else "9:16",
-                                               "resolution": get_key("gemini", "video_resolution", "720p")})
+                                               "resolution": get_key("gemini", "video_resolution", "720p"),
+                                               "duration": omni_duration(seconds)})
     item = find_media(body, "video")
     if not item:
         raise RuntimeError(f"Gemini Omni returned no video (content filter?): {json.dumps(body)[:300]}")
