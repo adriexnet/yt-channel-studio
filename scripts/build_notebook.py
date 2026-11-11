@@ -44,6 +44,17 @@ print("Code version:", studio.__version__, git("-C", CODE, "log", "-1", "--forma
 from studio import setup
 setup.base()'''
 
+QUICK_START = CELL_1 + '''
+
+# @title ⚡ Quick start { display-mode: "form" }
+# @markdown Tick the local tools you want, then run this one cell. It does cells 1, 2, the ticked tools and 7.
+ollama_llm = True      # @param {type:"boolean"}
+flux_images = True     # @param {type:"boolean"}
+wan_video = True       # @param {type:"boolean"}
+ltx_video = False      # @param {type:"boolean"}
+audio_studio = False   # @param {type:"boolean"}
+setup.quick_start(ollama=ollama_llm, forge=flux_images, wan=wan_video, ltx=ltx_video, audio=audio_studio)'''
+
 CELLS = [
     ("## 📚 Cell 1 · Base\nDownloads or updates the code from GitHub, connects Google Drive (approve the popup), "
      "creates the project folders and `api_keys.toml`. Run first, and again whenever you want the latest code.", CELL_1),
@@ -72,14 +83,19 @@ CELLS = [
 
 
 def main():
-    cells = []
+    cells = [{"cell_type": "markdown", "metadata": {"id": "md_quick_start"},
+              "source": "## ⚡ Quick start\nOne cell for everything: the code, Google Drive (approve the popup), the "
+                        "environment, the local tools you tick and the Control Center. The numbered cells below do "
+                        "the same one by one, when you want only some of them or need to restart one."},
+             {"cell_type": "code", "metadata": {"id": "code_quick_start", "cellView": "form"},
+              "execution_count": None, "outputs": [], "source": QUICK_START}]
     for i, (markdown, code) in enumerate(CELLS, 1):
         cells.append({"cell_type": "markdown", "metadata": {"id": f"md_cell_{i}"}, "source": markdown})
         cells.append({"cell_type": "code", "metadata": {"id": f"code_cell_{i}"}, "execution_count": None,
                       "outputs": [], "source": code})
     notebook = {
         "nbformat": 4, "nbformat_minor": 0,
-        "metadata": {"colab": {"provenance": [], "gpuType": "T4", "toc_visible": True},
+        "metadata": {"colab": {"provenance": [], "gpuType": "L4", "toc_visible": True},
                      "kernelspec": {"name": "python3", "display_name": "Python 3"},
                      "language_info": {"name": "python"}, "accelerator": "GPU"},
         "cells": cells,

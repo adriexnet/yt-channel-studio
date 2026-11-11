@@ -87,3 +87,27 @@ def environment():
                        f"Subtitle fonts in Drive: {len(fonts)}",
                        "Next: run Cells 3-6 for the local tools you need, then Cell 7" if gpu_name else
                        "Next: run Cell 7 and configure an external LLM in the Control Center"], problems)
+
+
+def quick_start(ollama=True, forge=True, wan=True, ltx=False, audio=False):
+    """The quick-start cell: cell 2, the local tools that are ticked and the Control Center, one after the other.
+    A tool that fails is reported and the rest go on, so the Control Center always opens."""
+    from .tools import ollama as ollama_tool, forge as forge_tool, comfyui, audio as audio_tool
+    from . import control_center
+    environment()
+    video = [name for name, wanted in (("wan22", wan), ("ltxv", ltx)) if wanted]
+    steps = [("Ollama", ollama, ollama_tool.start), ("Forge", forge, forge_tool.start),
+             ("ComfyUI", bool(video), lambda: comfyui.start(models=video)),
+             ("Audio Studio", audio, audio_tool.start)]
+    failed = []
+    for label, wanted, start in steps:
+        if not wanted:
+            continue
+        try:
+            start()
+        except Exception as exc:
+            failed.append(label)
+            print(f"❌ {label} did not start: {exc}\n   Run its own cell below to try again.")
+    control_center.start()
+    if failed:
+        print(f"⚠️ Not running: {', '.join(failed)}. The Control Center tells you when a choice needs one of them.")

@@ -11,9 +11,11 @@ content picks its own provider: local (free, on your Colab GPU) or external (thr
 ## Quick start
 
 1. Open the notebook with the **Open in Colab** button above.
-2. **Runtime → Change runtime type → GPU** (T4 or L4). It also works without a GPU, with fewer options.
-3. Run **Cell 1** and approve the Google Drive permission. Then run **Cell 2**.
-4. Run **Cell 7** and open the **Control Center** link printed at the end.
+2. The notebook asks for an **L4** GPU (change it in **Runtime → Change runtime type**; T4 works for images,
+   and without a GPU there are fewer options).
+3. Run **⚡ Quick start**: tick the local tools you want, approve the Google Drive permission, and it runs
+   everything in order (cells 1, 2, the ticked tools and 7).
+4. Open the **Control Center** link printed at the end. The numbered cells below do the same one by one.
 5. In the **🔑 API keys** tab, save at least one language model (OpenAI, Gemini, Groq…) and the free
    [Pexels](https://www.pexels.com/api/) key. Press **Test the connection** to check them.
 6. Back in **🎬 Produce**, type your idea and press **➤**.
