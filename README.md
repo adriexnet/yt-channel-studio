@@ -59,7 +59,8 @@ The notebook only calls functions of this repository; the code lives here and Ce
 | 8 · Dashboard | Every active public link | Optional |
 
 The heavy tools (Forge, ComfyUI, F5-TTS) each get their own virtual environment with `uv`, so their PyTorch
-versions never clash. Models are saved in Drive and downloaded once.
+versions never clash. Their models are saved in Drive and downloaded once. Ollama's models are pulled to the
+local disk each time Cell 3 runs: loading them from Drive kept the GPU waiting for minutes.
 
 ## Providers
 
@@ -110,7 +111,7 @@ YT-Channel-Studio/
 ├── footage/               your clips and photos for the «My clips» source
 ├── fonts/                 subtitle fonts; add yours here
 ├── voices/                samples to clone your voice
-├── models/                Ollama, FLUX, Wan, LTX and F5-TTS weights
+├── models/                FLUX, Wan, LTX and F5-TTS weights (Ollama models download to the local disk in Cell 3)
 └── code/                  a copy of the code, in case GitHub does not answer
 ```
 

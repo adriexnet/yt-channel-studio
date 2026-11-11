@@ -1,4 +1,8 @@
-"""Cell 3: Ollama (local LLMs, weights persist in Drive) + a chat UI."""
+"""Cell 3: Ollama (local LLMs) + a chat UI.
+
+The weights are pulled from the Ollama registry into the local disk each time this cell runs, so nothing is
+downloaded when Ollama is not used. Loading them from Drive was much slower: Ollama memory-maps the file and
+reads it in pieces, which Drive serves slowly, so the GPU waited minutes for every request."""
 from ..lib import *
 
 DEFAULT_MODELS = ["qwen2.5:14b", "deepseek-r1:14b"]
@@ -9,9 +13,9 @@ OLLAMA_LOG = log_path("ollama_server")
 def pull_model(model):
     installed = subprocess.run(["ollama", "list"], capture_output=True, text=True).stdout
     if model in installed:
-        print(f"[exists in Drive] {model}")
+        print(f"[already downloaded] {model}")
         return
-    print(f"Pulling {model} into Drive...")
+    print(f"Pulling {model} to the local disk...")
     bar, last_digest = None, None
     with requests.post(f"{OLLAMA_URL}/api/pull", json={"name": model, "stream": True}, stream=True) as r:
         for line in r.iter_lines():
@@ -58,7 +62,8 @@ def start(models=None):
     models = list(models or DEFAULT_MODELS)
     start_cell("Cell 3 · Ollama (local LLMs + chat UI)")
     problems = []
-    os.environ["OLLAMA_MODELS"] = f"{MODELS_DIR}/ollama"   # model weights persist in Drive
+    os.environ["OLLAMA_MODELS"] = f"{LOCAL_MODELS_DIR}/ollama"   # local disk: fast to load, gone with the session
+    os.makedirs(os.environ["OLLAMA_MODELS"], exist_ok=True)
     os.environ["OLLAMA_HOST"] = f"0.0.0.0:{PORTS['ollama_api']}"
     if shutil.which("ollama") is None:
         if shutil.which("zstd") is None:   # the Ollama installer extracts a .tar.zst; Colab does not ship zstd
